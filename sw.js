@@ -44,6 +44,25 @@ self.addEventListener('message', e => {
     alarm = setTimeout(() => self.registration.showNotification(d.title, d.options || {}), wait);
   }
 });
+/* Push utan innehåll: servern knackar bara på. Texten ligger i cachen,
+   lagd dit av appen när passet startade. Därför slipper vi kryptera
+   nyttolasten — och servern får aldrig veta vad passet handlade om. */
+self.addEventListener('push', e => {
+  e.waitUntil((async () => {
+    let title = 'Passet är klart 🎉', body = '';
+    try {
+      const c = await caches.open('fokus-alarm');
+      const r = await c.match(new URL('__alarm', self.registration.scope).href);
+      if (r){ const d = await r.json(); title = d.title || title; body = d.body || body; }
+    } catch(err){}
+    await self.registration.showNotification(title, {
+      body, tag:'fokus-timer', renotify:true, requireInteraction:true,
+      icon:'icons/icon-192.png', badge:'icons/badge.png',
+      vibrate:[220, 90, 220, 90, 380],
+    });
+  })());
+});
+
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(self.clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {

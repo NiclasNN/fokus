@@ -1,0 +1,11 @@
+name = "fokus-push"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+[[durable_objects.bindings]]
+name = "ALARM"
+class_name = "Alarm"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Alarm"]

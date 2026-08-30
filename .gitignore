@@ -8,3 +8,6 @@
 # lokal editor-/värdkoppling med absoluta sökvägar
 .vscode/mcp.json
 .netlify/
+
+# VAPID-nycklar: den privata får aldrig lämna maskinen
+push/vapid.json
