@@ -408,6 +408,18 @@ function writeClock(ms){
   el.classList.toggle('is-long', txt.length > 5);
 }
 
+/* Samma sanning på alla flikar: pillret läses ur samma remaining(). */
+function paintPill(){
+  const el = $('#timerPill');
+  const live = T.status === 'running' || T.status === 'paused';
+  const show = live && document.body.dataset.view !== 'focus';
+  el.hidden = !show;
+  $('#todayPill').hidden = show;          // topbaren rymmer inte bådadera
+  if (!show) return;
+  $('#timerPillText').textContent = fmtClock(remaining());
+  el.classList.toggle('is-paused', T.status === 'paused');
+}
+
 function paintDial(jump){
   const dial = $('#dial');
   if (jump) dial.classList.add('is-jump');
@@ -415,6 +427,7 @@ function paintDial(jump){
   if (live) paintRun(remaining());
   else { cur = minsFloat = Math.round(T.durationMs / 60000); paintIdle(cur); }
   document.title = live ? `${fmtClock(remaining())} · Fokus` : 'Fokus — fyra livsområden';
+  paintPill();
   if (jump){ void dial.offsetWidth; dial.classList.remove('is-jump'); }
   paintSteppers();
 }
@@ -1170,6 +1183,7 @@ function go(view){
   document.body.dataset.view = view;
   $$('.view').forEach(v => v.classList.toggle('is-active', v.id === 'view-' + view));
   $$('#tabbar .tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === view));
+  paintPill();
   if (view === 'tasks')    { renderDurPick(); renderTasks(); }
   if (view === 'stats')    renderStats();
   if (view === 'settings') renderSettings();
@@ -1216,6 +1230,7 @@ function init(){
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#sheetBackdrop').addEventListener('click', closeSheet);
   $('#btnNotify').addEventListener('click', enableNotifications);
+  $('#timerPill').addEventListener('click', () => { buzz(8); go('focus'); });
   $('#streakPill').addEventListener('click', () => go('stats'));
   $('#todayPill').addEventListener('click', () => go('stats'));
   $$('#tabbar .tab').forEach(t => t.addEventListener('click', () => { buzz(8); go(t.dataset.tab); }));

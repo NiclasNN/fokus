@@ -142,6 +142,16 @@ body.sheet-open .grain{display:none;}
   transition:transform .2s var(--ease-snap), background .3s, color .3s;}
 .pill:active{transform:scale(.94);}
 .pill--streak .ic{width:15px;height:15px;color:var(--accent);}
+
+/* Passet följer med till de andra flikarna. Ett tryck tar dig tillbaka. */
+.pill--timer{color:var(--text);border-color:color-mix(in srgb,var(--accent) 40%,transparent);
+  background:color-mix(in srgb,var(--accent) 12%,var(--surface));
+  font-variant-numeric:tabular-nums;font-weight:640;}
+.pill__dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none;
+  animation:pillBeat 2s ease-in-out infinite;}
+@keyframes pillBeat{50%{opacity:.35;}}
+.pill--timer.is-paused{opacity:.72;}
+.pill--timer.is-paused .pill__dot{animation:none;opacity:.5;}
 .pill--streak.is-hot{color:var(--text);border-color:var(--accent-soft);background:var(--accent-soft);}
 
 /* Enda ytan som rullar. min-height:0 krävs för att en flexbarn ska få krympa. */
