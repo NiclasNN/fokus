@@ -19,6 +19,7 @@ const CATS = [
 ];
 const catById = id => CATS.find(c => c.id === id) || CATS[1];
 const PRESETS = [5, 15, 25, 45, 60, 90];
+const MIN_MS  = 60000;   // ett pass under en minut varken startas, sparas eller räknas
 
 /* ── utils ───────────────────────────────────────────────── */
 const p2   = n => String(n).padStart(2, '0');
@@ -48,7 +49,7 @@ const defaults = () => ({
   tasks: [],
   sessions: [],
   timer: { status:'idle', catId:'struktur', taskId:null, durationMs: 25*60*1000, startedAt:0, elapsedBefore:0 },
-  settings: { theme:'light', sound:true, haptics:true, keepAwake:true, notify:true, lastDurMin:25 },
+  settings: { theme:'light', sound:true, haptics:true, keepAwake:true, notify:true, lastDurMin:25, hintSeen:false },
 });
 
 let S = load();
@@ -133,6 +134,7 @@ const sndDone  = () => { if (!S.settings.sound) return;
 /* ── toast ───────────────────────────────────────────────── */
 function toast(msg, ms = 2600){
   const host = $('#toasts');
+  host.replaceChildren();
   const el = document.createElement('div');
   el.className = 'toast'; el.textContent = msg;
   host.appendChild(el);
@@ -204,7 +206,7 @@ const remaining = () => Math.max(0, T.durationMs - elapsed());
 function startTimer(){
   audio();
   if (T.status === 'running') return;
-  if (T.durationMs < 1000){ toast('Ställ en tid först'); return; }
+  if (T.durationMs < MIN_MS){ toast('Ställ minst en minut först'); return; }
   if (T.status === 'idle') T.elapsedBefore = 0;
   T.status = 'running';
   T.startedAt = Date.now();
@@ -228,7 +230,7 @@ function resetTimer(){
 }
 function finishEarly(){
   const ms = elapsed();
-  if (ms < 30000){ resetTimer(); toast('Passet var för kort för att sparas'); return; }
+  if (ms < MIN_MS){ resetTimer(); toast('Pass under en minut sparas inte'); return; }
   logSession(ms, Date.now());
   resetTimer();
   toast(`${fmtDur(ms)} sparat i ${catById(T.catId).name}`);
@@ -316,9 +318,7 @@ function renderFocus(){
   const c = catById(T.catId);
   $('#dialCat').textContent = c.name.toUpperCase();
   const task = currentTask();
-  $('#taskPickText').textContent = task ? task.title : 'Vad ska du göra?';
-  $('#taskPick').classList.toggle('is-empty', !task);
-  $('#taskPickIcon').innerHTML = `<use href="#${task ? 'i-list' : 'i-plus'}"></use>`;
+  renderTaskStrip();
 
   const running = T.status === 'running', paused = T.status === 'paused';
   $('#dial').classList.toggle('is-running', running);
@@ -330,13 +330,51 @@ function renderFocus(){
                             : paused  ? 'Pausad'
                             : task ? task.title
                             : 'Redo att starta';
-  $('#dialHint').style.opacity = T.status === 'idle' ? '1' : '0';
+  $('#dialHint').hidden = S.settings.hintSeen || T.status !== 'idle';
   $('#btnReset').disabled = T.status === 'idle' && T.elapsedBefore === 0;
   $('#btnDone').disabled  = T.status === 'idle';
 
   $$('#cats .corner').forEach(el => el.classList.toggle('is-on', el.dataset.id === T.catId));
   markPreset();
   paintDial();
+}
+
+function renderTaskStrip(){
+  const host = $('#taskStrip');
+  const open = S.tasks.filter(t => t.catId === T.catId && !t.done);
+
+  host.innerHTML = open.length
+    ? open.map(t => `<button type="button" class="tchip ${T.taskId === t.id ? 'is-on' : ''}"
+          data-id="${t.id}" data-dur="${t.durationMs}">
+          <span class="tchip__t">${escapeHtml(t.title)}</span>
+          <span class="tchip__done" data-done="1" role="button" tabindex="0"
+                aria-label="Markera klar"><svg class="ic ic--xs"><use href="#i-check"></use></svg></span>
+        </button>`).join('') +
+      `<button type="button" class="tchip tchip--add" id="tchipAdd" aria-label="Ny uppgift"><svg class="ic ic--sm"><use href="#i-plus"></use></svg></button>`
+    : `<button type="button" class="tchip tchip--add tchip--empty" id="tchipAdd">
+         <svg class="ic ic--sm"><use href="#i-plus"></use></svg><span>Vad ska du göra?</span></button>`;
+
+  $('#tchipAdd').addEventListener('click', () => { buzz(8); openSheet('task'); });
+
+  $$('.tchip[data-id]', host).forEach(el => el.addEventListener('click', ev => {
+    const id = el.dataset.id;
+    const t = S.tasks.find(x => x.id === id);
+    if (!t) return;
+    if (ev.target.closest('[data-done]')){
+      t.done = true; t.completedAt = Date.now();
+      if (T.taskId === id) T.taskId = null;
+      buzz([10, 40, 16]); save(); renderAll(); toast(`"${t.title}" är klar ✓`);
+      return;
+    }
+    if (T.taskId === id) T.taskId = null;            // tryck igen = avmarkera
+    else {
+      T.taskId = id;
+      if (T.status === 'idle'){ T.durationMs = t.durationMs; T.elapsedBefore = 0; T.startedAt = 0; }
+    }
+    buzz(8); save(); renderFocus();
+  }));
+
+  host.querySelector('.tchip.is-on')?.scrollIntoView({ inline:'center', block:'nearest', behavior:'smooth' });
 }
 
 function markPreset(){
@@ -403,6 +441,7 @@ function initDial(){
       T.durationMs = min * 60000;
       T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
       S.settings.lastDurMin = min;
+      S.settings.hintSeen = true;
       buzz(4); paintDial(); markPreset(); save();
     }
   });
@@ -425,7 +464,7 @@ function wireSteppers(root){
   const step = (unit, dir) => {
     const mult = unit === 'h' ? 3600 : unit === 'm' ? 60 : 5;
     let t = Math.round(T.durationMs / 1000) + dir * mult;
-    t = clamp(t, 0, 240 * 60);
+    t = clamp(t, MIN_MS / 1000, 240 * 60);
     T.durationMs = t * 1000; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
     S.settings.lastDurMin = Math.round(t / 60);
     buzz(5); renderFocus(); save();
@@ -603,7 +642,7 @@ function fmtSplit(ms){
                   : `<span class="kpi__v">${Math.floor(min/60)}<small>h</small> ${min%60}<small>m</small></span>`;
 }
 function streak(){
-  const set = new Set(S.sessions.filter(s => s.ms >= 60000).map(s => dayKey(s.endedAt)));
+  const set = new Set(S.sessions.filter(s => s.ms >= MIN_MS).map(s => dayKey(s.endedAt)));
   let n = 0; const d = new Date(); d.setHours(0,0,0,0);
   if (!set.has(dayKey(d.getTime()))) d.setDate(d.getDate() - 1);
   while (set.has(dayKey(d.getTime()))){ n++; d.setDate(d.getDate() - 1); }
@@ -759,21 +798,14 @@ function openSheet(mode = 'task'){
     $('#sheetOk').addEventListener('click', closeSheet);
   } else {
     const c = catById(T.catId);
-    $('#sheetTitle').textContent = 'Vad ska du fokusera på?';
-    const open = S.tasks.filter(t => t.catId === T.catId && !t.done);
+    $('#sheetTitle').textContent = 'Ny uppgift';
     body.innerHTML = `
       <form class="sheetadd" id="sheetAdd" autocomplete="off">
         <input class="sheetadd__input" id="sheetAddInput" type="text" enterkeyhint="done"
-               maxlength="90" placeholder="Skriv din uppgift…">
+               maxlength="90" placeholder="Vad ska du göra?">
         <button class="sheetadd__go" type="submit" aria-label="Lägg till"><svg class="ic"><use href="#i-plus"></use></svg></button>
       </form>
-      <p class="muted small" id="sheetHint">Sparas i ${c.name} med ${fmtDur(T.durationMs)}.</p>
-      ${open.length ? `<div class="sheet__section">Dina uppgifter i ${c.name}</div>` : ''}
-      ${open.map(t => `<button type="button" class="pickitem ${T.taskId === t.id ? 'is-on' : ''}" data-id="${t.id}" data-dur="${t.durationMs}">
-        <span class="pickitem__dot" style="background:${c.c}"></span>
-        <span class="pickitem__t">${escapeHtml(t.title)}</span>
-        <span class="pickitem__m">${fmtDur(t.durationMs)}</span></button>`).join('')}
-      ${T.taskId ? '<button type="button" class="pickitem pickitem--clear" id="pickClear"><span class="pickitem__t">Fokusera utan uppgift</span></button>' : ''}`;
+      <p class="muted small">Sparas i ${c.name} med ${fmtDur(T.durationMs)} och väljs direkt.</p>`;
 
     $('#sheetAdd').addEventListener('submit', e => {
       e.preventDefault();
@@ -784,23 +816,14 @@ function openSheet(mode = 'task'){
       S.tasks.unshift(t);
       T.taskId = t.id;
       buzz(12); save(); closeSheet(); renderAll();
-      toast(`"${title}" är redo — tryck Starta`);
     });
     setTimeout(() => $('#sheetAddInput')?.focus(), 340);
-
-    $$('.pickitem[data-id]', body).forEach(el => el.addEventListener('click', () => {
-      T.taskId = el.dataset.id;
-      if (el.dataset.dur && T.status === 'idle'){ T.durationMs = +el.dataset.dur; T.elapsedBefore = 0; T.startedAt = 0; }
-      buzz(8); save(); closeSheet(); renderFocus();
-    }));
-    $('#pickClear')?.addEventListener('click', () => {
-      T.taskId = null; buzz(8); save(); closeSheet(); renderFocus();
-    });
   }
   $('#sheet').hidden = false; $('#sheetBackdrop').hidden = false;
 }
 function closeSheet(){
   const s = $('#sheet');
+  if (s.hidden || s.classList.contains('is-closing')) return;
   s.classList.add('is-closing');
   setTimeout(() => { s.hidden = true; s.classList.remove('is-closing'); $('#sheetBackdrop').hidden = true; }, 260);
 }
@@ -867,7 +890,11 @@ function init(){
   $('#btnPlay').addEventListener('click',  () => T.status === 'running' ? pauseTimer() : startTimer());
   $('#btnReset').addEventListener('click', resetTimer);
   $('#btnDone').addEventListener('click',  finishEarly);
-  $('#taskPick').addEventListener('click', () => openSheet('task'));
+  $('#dialTime').addEventListener('pointerdown', e => e.stopPropagation());
+  $('#dialTime').addEventListener('click', () => {
+    if (T.status !== 'idle') return;
+    buzz(8); openSheet('time');
+  });
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#sheetBackdrop').addEventListener('click', closeSheet);
   $('#btnNotify').addEventListener('click', enableNotifications);

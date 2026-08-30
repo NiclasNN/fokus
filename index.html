@@ -82,17 +82,14 @@
           </svg>
           <div class="dial__face">
             <div class="dial__cat" id="dialCat">STRUKTUR</div>
-            <div class="dial__time" id="dialTime">25:00</div>
+            <button class="dial__time" id="dialTime" type="button" aria-label="Ändra tid">25:00</button>
             <div class="dial__sub"  id="dialSub">Redo att starta</div>
           </div>
         </div>
         <p class="dial__hint" id="dialHint">Dra runt ringen för att ställa tiden</p>
       </div>
 
-      <button class="taskpill is-empty" id="taskPick" type="button">
-        <svg class="ic ic--sm" id="taskPickIcon"><use href="#i-plus"></use></svg>
-        <span id="taskPickText">Vad ska du göra?</span>
-      </button>
+      <div class="taskstrip" id="taskStrip" aria-label="Uppgifter i valt område"></div>
 
       <div class="presets" id="presets"></div>
 
@@ -112,6 +109,7 @@
       <input class="addrow__input" id="addInput" type="text" placeholder="Vad ska du göra?" maxlength="90" enterkeyhint="done">
       <button class="addrow__go" type="submit" aria-label="Lägg till"><svg class="ic"><use href="#i-plus"></use></svg></button>
     </form>
+    <p class="fieldlabel">Tid per pass</p>
     <div class="durpick" id="durPick"></div>
     <div class="tasklist" id="taskList"></div>
     <div class="donewrap" id="doneWrap"></div>
