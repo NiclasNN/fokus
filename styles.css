@@ -13,6 +13,11 @@
   --text-dim:#3D4459;
   --muted:#767E93;
   --plate:#FFFFFF;
+  --plate-hi:#FFFFFF;
+  --groove-lo:rgba(8,12,28,.11);
+  --groove-hi:rgba(255,255,255,.55);
+  --aura-op:.16;
+  --light-core:var(--accent);
   --danger:#F2445A;
 
   --shadow-lg:0 28px 64px -26px rgba(19,28,54,.28), 0 2px 10px rgba(19,28,54,.05);
@@ -42,6 +47,11 @@
   --text-dim:#A7ADBE;
   --muted:#767D90;
   --plate:rgba(255,255,255,.026);
+  --plate-hi:rgba(255,255,255,.05);
+  --groove-lo:rgba(0,0,0,.55);
+  --groove-hi:rgba(255,255,255,.07);
+  --aura-op:.28;
+  --light-core:var(--accent-hi);
   --danger:#FF5E6B;
   --shadow-lg:0 24px 60px -18px rgba(0,0,0,.78), 0 2px 8px rgba(0,0,0,.4);
   --shadow-sm:0 8px 24px -10px rgba(0,0,0,.7);
@@ -168,8 +178,8 @@ body.is-running .corner:not(.is-on){opacity:.4;transform:scale(.9);}
 body.is-running .corner:not(.is-on):active{transform:scale(.86);}
 /* tiden och uppgiften är låsta under ett pass — dämpade, men fortfarande
    tryckbara så vakten hinner förklara varför */
-body.is-running .presets,
-body.is-running .taskstrip{opacity:.42;}
+body.is-running .presets,  body.is-paused .presets,
+body.is-running .taskstrip,body.is-paused .taskstrip{opacity:.42;}
 .corner--tl{top:0;left:0}
 .corner--tr{top:0;right:0}
 .corner--bl{bottom:0;left:0}
@@ -220,44 +230,107 @@ body.is-running .taskstrip{opacity:.42;}
   opacity:0;transition:.3s var(--ease-snap);}
 .cat.has-tasks .cat__dot{opacity:.85;}
 
-/* ── dial ──────────────────────────────────────────────── */
+/* ── dial: "Glöd" — ett upplyst föremål, inte en ritad båge ─ */
 .dialwrap{display:flex;flex-direction:column;align-items:center;}
-.dial{position:relative;width:min(60vw,248px);aspect-ratio:1;touch-action:none;user-select:none;-webkit-user-select:none;}
-.dial__svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible;}
-.dial__plate{fill:var(--plate);}
-.dial__track{fill:none;stroke:var(--line-strong);stroke-width:3;opacity:.45;}
-.dial__prog,.dial__glow{fill:none;stroke:url(#arcGrad);stroke-width:9;stroke-linecap:round;
-  transition:stroke-dashoffset .28s linear;}
-.dial__glow{stroke-width:16;opacity:.28;filter:blur(9px);}
-.dial__knob{fill:var(--plate);stroke:var(--accent);stroke-width:3.2;
-  filter:drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 70%, transparent));}
-.dial__ticks line{stroke:var(--line-strong);stroke-width:1.5;stroke-linecap:round;opacity:.26;}
-.dial__ticks line.on{stroke:var(--accent);opacity:.7;}
+.dial{position:relative;width:min(63vw,252px);aspect-ratio:1;user-select:none;-webkit-user-select:none;}
 
-.dial__face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;pointer-events:none;}
+/* Bandet ÄR gesten. inset -24px så ytterkanten nås även rakt uppåt, och
+   clip-path styr träffprovet så kvadratens hörn aldrig stjäl ett tryck. */
+.dial__band{position:absolute;inset:-24px;border-radius:50%;clip-path:circle(50%);
+  touch-action:none;z-index:1;cursor:grab;display:block;}
+.dial.is-drag .dial__band{cursor:grabbing;}
+.dial__band:focus-visible{outline:2px solid var(--accent);outline-offset:5px;}
+
+.dial__bed{position:absolute;inset:0;border-radius:50%;
+  background:radial-gradient(120% 120% at 30% 22%, var(--plate-hi), var(--plate));
+  box-shadow:0 24px 48px -28px rgba(12,18,40,.4), inset 0 1px 0 rgba(255,255,255,.7);}
+:root[data-theme="dark"] .dial__bed{
+  box-shadow:0 24px 48px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06);}
+
+/* Den enda blurren i ratten. Ändrar bara opacity — aldrig geometri. */
+.dial__aura{position:absolute;top:19%;left:19%;width:62%;height:62%;border-radius:50%;
+  background:radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  filter:blur(26px);opacity:var(--aura-op);pointer-events:none;
+  transition:opacity .32s var(--ease);}
+
+.dial__svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;}
+#plate{fill:var(--plate);}
+.dial__ticks line{stroke:var(--text);stroke-width:1.25;stroke-linecap:round;opacity:.18;}
+.dial__lip{fill:none;stroke-width:1;}
+.dial__lip--out{stroke:var(--groove-lo);}
+.dial__lip--in{stroke:var(--groove-hi);}
+#groove{fill:none;stroke:url(#grooveGrad);stroke-width:14;}
+.dial__glass{fill:none;stroke:rgba(255,255,255,.6);stroke-width:1;
+  stroke-dasharray:410 329;transform:rotate(-190deg);transform-origin:130px 130px;}
+:root[data-theme="dark"] .dial__glass{stroke:rgba(255,255,255,.22);}
+
+#gLaps circle{fill:none;stroke:var(--accent);stroke-width:1.5;opacity:.45;
+  transform-box:view-box;transform-origin:130px 130px;}
+#gLaps circle.is-new{animation:lapIn .22s var(--ease);}
+@keyframes lapIn{from{transform:scale(.92);opacity:0;}to{transform:scale(1);opacity:.45;}}
+
+#trail,#core{fill:none;stroke-width:10;stroke-linecap:round;}
+#trail{stroke:var(--accent);opacity:0;
+  transition:stroke-dashoffset 90ms linear, opacity .42s var(--ease), stroke-width .42s var(--ease);}
+.dial.is-drag #trail{opacity:.42;}
+#core{stroke:url(#coreGrad);}
+#core.blink{animation:coreBlink .12s linear;}
+@keyframes coreBlink{50%{opacity:.82;}}
+
+#headPuck{stroke:rgba(255,255,255,.7);stroke-width:1;
+  filter:drop-shadow(0 2px 3px rgba(8,12,28,.35));
+  transform-box:view-box;transform-origin:130px 30px;
+  transition:transform .22s var(--ease-snap);}
+#headSpec{fill:#fff;opacity:.85;}
+#headHalo{transition:opacity .26s var(--ease);}
+.dial.is-drag #headPuck{transform:scale(1.16);transition-duration:.14s;}
+.dial.is-drag #headHalo{opacity:.85;}
+.dial.is-drag .dial__aura{opacity:calc(var(--aura-op) * 1.35);transition-duration:.2s;}
+
+#edge{fill:none;stroke:var(--accent);stroke-width:1;opacity:0;}
+#edge.flash{animation:edgeFlash .16s linear;}
+@keyframes edgeFlash{50%{opacity:.9;}}
+
+/* Direktmanipulation får aldrig gå genom en transition. */
+.dial.is-drag #gHead,.dial.is-drag #core,.dial.is-drag #arcMaskArc,
+.dial.is-jump #gHead,.dial.is-jump #core,.dial.is-jump #arcMaskArc,
+.dial.is-jump #trail{transition:none !important;}
+
+/* Under körning skrivs värdet en gång per sekund och glider dit. */
+body.is-running #gHead,body.is-running #core,body.is-running #arcMaskArc{
+  transition:transform 1000ms linear, stroke-dashoffset 1000ms linear;}
+body.is-running .dial__aura{animation:auraBreathe 4200ms ease-in-out infinite alternate;}
+body.is-running .ambient i{animation-play-state:paused;}
+body.is-running #headHalo{opacity:.4;}
+@keyframes auraBreathe{to{opacity:calc(var(--aura-op) * 1.45);}}
+body.is-endgame .dial__aura{animation-duration:1200ms;}
+
+body.is-paused #core{animation:corePulse 2800ms ease-in-out infinite;}
+body.is-paused .dial__aura{opacity:.06;}
+body.is-paused #headPuck{transform:scale(.8);transition-duration:.24s;}
+@keyframes corePulse{50%{opacity:.55;}}
+
+.dial.is-done .dial__svg{animation:dialExhale .7s var(--ease-snap) .3s;}
+@keyframes dialExhale{35%{transform:scale(1.05);}}
+
+.dial__face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px;pointer-events:none;z-index:2;}
 .dial__cat{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--accent);text-transform:uppercase;}
-.dial__time{padding:0;border:0;background:none;pointer-events:auto;font-size:clamp(40px,12.6vw,58px);font-weight:230;letter-spacing:-.045em;line-height:1.02;
-  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;
-  transition:opacity .3s;}
+.dial__time{padding:0;border:0;background:none;pointer-events:auto;display:flex;align-items:baseline;gap:6px;
+  font-size:clamp(46px,13.5vw,64px);font-weight:200;letter-spacing:-.05em;line-height:1.02;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.dial__time.is-clock{font-size:clamp(44px,12.8vw,60px);}
+.dial__time.is-long{font-size:clamp(32px,9.4vw,44px);}
+.dial__time.pop{animation:numPop .16s var(--ease-snap);}
+@keyframes numPop{50%{transform:scale(1.04);}}
+.dial__unit{font-size:11px;font-weight:700;letter-spacing:.18em;color:var(--muted);
+  text-transform:uppercase;align-self:center;padding-top:14px;}
 .dial__sub{font-size:13px;color:var(--muted);font-weight:520;max-width:74%;text-align:center;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .dial__hint{font-size:11.5px;color:var(--muted);margin-top:9px;height:15px;transition:opacity .3s;}
 
-.dial.is-running .dial__knob{animation:knobPulse 2.4s ease-in-out infinite;}
-@keyframes knobPulse{0%,100%{opacity:1;}50%{opacity:.55;}}
-.dial.is-dragging .dial__time{opacity:.98;}
-.dial.is-done{animation:ding .7s var(--ease-snap);}
-@keyframes ding{0%{transform:scale(1);}35%{transform:scale(1.045);}100%{transform:scale(1);}}
-
-/* ── task chooser ──────────────────────────────────────── */
-.taskbar{display:flex;align-items:center;gap:10px;margin:11px 0 10px;}
-.taskbar__label{font-size:12px;font-weight:640;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);flex:none;}
-.taskbar__btn{flex:1;display:flex;align-items:center;justify-content:space-between;gap:10px;
-  min-height:44px;padding:0 15px;border-radius:var(--r-md);border:1px solid var(--line);background:var(--surface);
-  font-size:14.5px;font-weight:560;text-align:left;transition:transform .2s var(--ease-snap),border-color .3s;}
-.taskbar__btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.taskbar__btn:active{transform:scale(.985);}
-.taskbar__btn .ic{color:var(--muted);}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0;}
 
 /* ── presets & steppers ────────────────────────────────── */
 .presets{display:flex;gap:7px;overflow-x:auto;padding:1px 2px 3px;max-width:100%;
@@ -450,7 +523,9 @@ body.is-running .taskstrip{opacity:.42;}
 
 /* ── toasts & celebration ──────────────────────────────── */
 .toasts{position:fixed;left:0;right:0;top:calc(var(--topbarh) + 2px);z-index:60;
+  transition:top .3s var(--ease);
   display:flex;flex-direction:column;align-items:center;pointer-events:none;padding:0 18px;}
+body[data-view="focus"] .toasts{top:calc(var(--topbarh) + var(--cw) + 14px);}
 .toast{max-width:400px;padding:11px 17px;border-radius:999px;font-size:14px;font-weight:540;
   background:var(--bg-elev);border:1px solid var(--line);box-shadow:var(--shadow-lg);
   animation:toastIn .4s var(--ease-snap);}
@@ -458,14 +533,9 @@ body.is-running .taskstrip{opacity:.42;}
 @keyframes toastIn{from{opacity:0;transform:translateY(-14px) scale(.94);}to{opacity:1;transform:none;}}
 @keyframes toastOut{to{opacity:0;transform:translateY(-10px) scale(.97);}}
 
-.celebrate{position:fixed;inset:0;z-index:55;pointer-events:none;overflow:hidden;}
-.celebrate i{position:absolute;width:9px;height:9px;border-radius:2px;opacity:0;
-  animation:conf 1.5s var(--ease) forwards;}
-@keyframes conf{0%{opacity:1;transform:translate3d(0,0,0) rotate(0);}100%{opacity:0;transform:translate3d(var(--dx),var(--dy),0) rotate(var(--rot));}}
-
 @media (max-height:720px){
   :root{--cw:clamp(66px,19vw,80px);}
-  .dial{width:min(56vw,222px);}
+  .dial{width:min(58vw,224px);}
   .focuscol{gap:10px;}
   .corner{border-radius:22px;}
   .corner .ic{width:21px;height:21px;}

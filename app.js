@@ -252,9 +252,7 @@ function completeTimer(at = Date.now()){
   save(); wakeOff();
   sndDone(); buzz([220, 90, 220, 90, 380]);
   fireNow('Passet är klart 🎉', `${catById(T.catId).name} · ${fmtDur(ms)} fokuserat`);
-  celebrate();
-  $('#dial').classList.add('is-done');
-  setTimeout(() => $('#dial').classList.remove('is-done'), 800);
+  doneSequence();
   renderAll();
 }
 function logSession(ms, endedAt){
@@ -289,42 +287,106 @@ function tick(force){
     completeTimer(Math.min(at, Date.now()));
     return;
   }
-  if (T.status === 'running' || force) paintDial();
+  if (T.status === 'running'){
+    const rem = remaining(), sec = Math.floor(rem / 1000);
+    if (sec === lastSec && !force) return;      // 1000 ms-transitionen får löpa klart
+    lastSec = sec;
+    document.body.classList.toggle('is-endgame', rem <= 10000);
+    paintDial(force);                            // force = återkomst från bakgrunden
+    return;
+  }
+  if (force) paintDial(true);
 }
 
-/* ── dial rendering ──────────────────────────────────────── */
-const R = 108, C = 2 * Math.PI * R, CX = 130;
+/* ── dial: "Glöd" — ett upplyst föremål ──────────────────── */
+const R = 100, C = 2 * Math.PI * R, CX = 130;
+const K_HYST = 0.58;   // minuter innan värdet flippar (3,48°)
+const K_ELAS = 0.55;   // ljusets gain inom ett steg
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+const lapsOf = m => Math.floor((m - 1) / 60);
+const arcOf  = m => m - lapsOf(m) * 60;        // alltid 1–60
+
+let minsFloat = 25, cur = 25, dragPid = null, flying = false;
+let lastSec = -1, shownLaps = -1, lastBuzzAt = 0, lastAriaAt = 0, nudged = false;
+
+/* En graverad skala. Aldrig accentfärgad, aldrig omritad. */
 function buildTicks(){
-  const g = $('#ticks');
-  g.innerHTML = Array.from({ length: 60 }, (_, i) => {
-    const a = (i * 6) * Math.PI / 180;
-    const r1 = i % 5 === 0 ? 88 : 92, r2 = 98;
+  $('#ticks').innerHTML = Array.from({ length: 60 }, (_, i) => {
+    const a = (i * 6 - 90) * Math.PI / 180;
+    const r1 = i % 5 === 0 ? 108 : 111, r2 = 116;
     return `<line x1="${(CX + r1*Math.cos(a)).toFixed(2)}" y1="${(CX + r1*Math.sin(a)).toFixed(2)}"
                   x2="${(CX + r2*Math.cos(a)).toFixed(2)}" y2="${(CX + r2*Math.sin(a)).toFixed(2)}"/>`;
   }).join('');
+  [$('#core'), $('#trail'), $('#arcMaskArc')].forEach(el => el.style.strokeDasharray = `${C}`);
 }
-function paintDial(){
-  const running = T.status === 'running', paused = T.status === 'paused';
-  const rem = (running || paused) ? remaining() : T.durationMs;
+
+/* Enda stället som rör ljusets geometri. */
+function paintRing(frac, headDeg){
+  const off = `${C * (1 - clamp(frac, 0, 1))}`;
+  $('#core').style.strokeDashoffset = off;
+  $('#trail').style.strokeDashoffset = off;
+  $('#arcMaskArc').style.strokeDashoffset = off;
+  $('#gHead').setAttribute('transform', `rotate(${headDeg.toFixed(2)} 130 130)`);
+  $('#headInner').setAttribute('transform', `rotate(${(-headDeg).toFixed(2)} 130 30)`);
+}
+
+function setLaps(n){
+  if (n === shownLaps) return;
+  const grow = n > shownLaps;
+  shownLaps = n;
+  $('#gLaps').innerHTML = Array.from({ length: n }, (_, i) =>
+    `<circle cx="130" cy="130" r="${80 - i * 8}" class="${grow && i === n - 1 ? 'is-new' : ''}"/>`).join('');
+}
+
+/* IDLE: ett varv = 60 minuter, hela timmar som varvringar. */
+function paintIdle(mins, elasticDeg = 0){
+  const arc = arcOf(mins);
+  paintRing(arc / 60, arc * 6 + elasticDeg);
+  setLaps(lapsOf(mins));
+  writeIdleTime(mins);
+}
+
+/* RUNNING/PAUSED: ett varv = hela passet. Varvringarna göms. */
+function paintRun(rem){
   const frac = T.durationMs > 0 ? clamp(rem / T.durationMs, 0, 1) : 0;
+  paintRing(frac, frac * 360);
+  setLaps(0);
+  writeClock(rem);
+}
 
-  $('#dialTime').textContent = fmtClock(rem);
-  $('#prog').style.strokeDasharray = `${C}`;
-  $('#prog').style.strokeDashoffset = `${C * (1 - frac)}`;
-  $('#glow').style.strokeDasharray = `${C}`;
-  $('#glow').style.strokeDashoffset = `${C * (1 - frac)}`;
+function writeIdleTime(mins){
+  const el = $('#dialTime'), num = $('#dialNum'), unit = $('#dialUnit');
+  const exact = (dragPid === null && !flying) ? Math.round(T.durationMs / 1000) % 60 : 0;
+  if (exact){ writeClock(T.durationMs); return; }
+  el.classList.remove('is-clock', 'is-long');
+  unit.hidden = false;
+  if (mins < 60){ num.textContent = mins; unit.textContent = 'min'; }
+  else {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    num.textContent = m ? `${h}:${p2(m)}` : String(h);
+    unit.textContent = 'tim';
+  }
+}
+function writeClock(ms){
+  const el = $('#dialTime'), txt = fmtClock(ms);
+  $('#dialNum').textContent = txt;
+  $('#dialUnit').hidden = true;
+  el.classList.add('is-clock');
+  el.classList.toggle('is-long', txt.length > 5);
+}
 
-  const ang = (frac * 360 - 90) * Math.PI / 180;
-  const knob = $('#knob');
-  knob.setAttribute('cx', (CX + R * Math.cos(ang + Math.PI/2)).toFixed(2));
-  knob.setAttribute('cy', (CX + R * Math.sin(ang + Math.PI/2)).toFixed(2));
-
-  const lit = Math.round(frac * 60);
-  $$('#ticks line').forEach((l, i) => l.classList.toggle('on', i < lit));
-
-  document.title = (running || paused) ? `${fmtClock(rem)} · Fokus` : 'Fokus — fyra livsområden';
+function paintDial(jump){
+  const dial = $('#dial');
+  if (jump) dial.classList.add('is-jump');
+  const live = T.status === 'running' || T.status === 'paused';
+  if (live) paintRun(remaining());
+  else { cur = minsFloat = Math.round(T.durationMs / 60000); paintIdle(cur); }
+  document.title = live ? `${fmtClock(remaining())} · Fokus` : 'Fokus — fyra livsområden';
+  if (jump){ void dial.offsetWidth; dial.classList.remove('is-jump'); }
   paintSteppers();
 }
+
 function paintSteppers(){
   if (!$('#stepH')) return;
   const t = Math.round(T.durationMs / 1000);
@@ -343,6 +405,9 @@ function renderFocus(){
   const running = T.status === 'running', paused = T.status === 'paused';
   $('#dial').classList.toggle('is-running', running);
   document.body.classList.toggle('is-running', running);
+  document.body.classList.toggle('is-paused', paused);
+  if (!running) document.body.classList.remove('is-endgame');
+  lastSec = -1;
   $('#btnPlay').innerHTML = running
     ? '<svg class="ic"><use href="#i-pause"></use></svg><span>Pausa</span>'
     : `<svg class="ic"><use href="#i-play"></use></svg><span>${paused ? 'Fortsätt' : 'Starta'}</span>`;
@@ -350,16 +415,17 @@ function renderFocus(){
                             : paused  ? 'Pausad'
                             : task ? task.title
                             : 'Redo att starta';
+  // Idle behöver ingen text — presentationsnudgen visar gesten i stället.
   const hint = $('#dialHint');
   if (paused){ hint.textContent = 'Pausad — nollställ för att ändra tiden'; hint.hidden = false; }
-  else if (running){ hint.hidden = true; }
-  else { hint.textContent = 'Dra runt ringen för att ställa tiden'; hint.hidden = S.settings.hintSeen; }
+  else { hint.hidden = true; }
   $('#btnReset').disabled = T.status === 'idle' && T.elapsedBefore === 0;
   $('#btnDone').disabled  = T.status === 'idle';
 
   $$('#cats .corner').forEach(el => el.classList.toggle('is-on', el.dataset.id === T.catId));
   markPreset();
   paintDial();
+  if (!running && !paused) maybeNudge();
 }
 
 function renderTaskStrip(){
@@ -438,58 +504,222 @@ function renderCats(host, onPick){
     el.addEventListener('click', () => { buzz(8); onPick(el.dataset.id); }));
 }
 
-/* ── dial drag ───────────────────────────────────────────── */
+/* ── gesten: tryck var som helst i bandet, ljuset flyter dit ─ */
 function initDial(){
-  const dial = $('#dial');
-  let dragging = false, lastAng = 0, accum = 0, startMin = 0, armed = false;
+  const dial = $('#dial'), band = $('#dialBand');
+  let prevAng = 0;
 
-  const angleAt = e => {
+  const polar = e => {
     const r = dial.getBoundingClientRect();
-    return Math.atan2(e.clientY - (r.top + r.height/2), e.clientX - (r.left + r.width/2)) * 180 / Math.PI;
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top  + r.height / 2);
+    return { rad: Math.hypot(dx, dy),
+             ang: (Math.atan2(dy, dx) * 180 / Math.PI + 90 + 360) % 360,
+             k: r.width / 260, half: r.width / 2 };
   };
-  // andel av radien — nära centrum ger några pixlar tiotals grader, och
-  // kvadratens hörn ligger utanför ringen
-  const radiusAt = e => {
-    const r = dial.getBoundingClientRect();
-    return Math.hypot(e.clientX - (r.left + r.width/2), e.clientY - (r.top + r.height/2)) / (r.width / 2);
-  };
-  dial.addEventListener('pointerdown', e => {
-    if (T.status !== 'idle') return;          // pausad tid får inte raderas
-    const rel = radiusAt(e);
-    if (rel < 0.55 || rel > 1.02) return;     // död zon i mitten och utanför ringen
-    dragging = true; accum = 0; armed = false;
-    startMin = Math.round(T.durationMs / 60000);
-    lastAng = angleAt(e);
-    try { dial.setPointerCapture(e.pointerId); } catch(err){}
-    dial.classList.add('is-dragging');
+
+  band.addEventListener('pointerdown', e => {
+    if (T.status !== 'idle'){ timeLocked(); return; }
+    if (dragPid !== null) return;                       // andra fingret ignoreras
+    const { rad, ang, k, half } = polar(e);
+    if (rad < 56 || rad > Math.min(half + 24, 142)) return;
+
+    dragPid = e.pointerId;
+    try { band.setPointerCapture(dragPid); } catch(err){}
+    dial.classList.add('is-drag');
+    $('#gHead').style.willChange = 'transform';
+    minsFloat = cur = Math.round(T.durationMs / 60000);
+
+    // greppar man pärlan behåller den sitt avstånd; annars flyger ljuset hit
+    const headAng = arcOf(cur) * 6;
+    const arcPx = Math.abs(((ang - headAng + 540) % 360) - 180) * Math.PI / 180 * 100 * k;
+    prevAng = ang;
+    buzz(6);
+    if (arcPx > 30) flyToAngle(ang);
   });
-  dial.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const a = angleAt(e);
-    let d = a - lastAng;
+
+  band.addEventListener('pointermove', e => {
+    if (e.pointerId !== dragPid || flying) return;
+    const { ang } = polar(e);
+    let d = ang - prevAng;
     if (d > 180) d -= 360; if (d < -180) d += 360;
-    lastAng = a; accum += d;
-    if (!armed){                               // ett tryck ska aldrig bli ett minutsprång
-      if (Math.abs(accum) < 8) return;
-      armed = true;
+    if (Math.abs(d) > 90){ prevAng = ang; return; }     // tappad händelse, inte en rörelse
+    prevAng = ang;
+
+    const want = minsFloat + d / 6;                      // 6° = 1 minut
+    minsFloat = clamp(want, 1, 240);                     // clampen ÄR rebaseringen
+    if (minsFloat !== want) edgeFlash();
+    if (Math.abs(minsFloat - cur) > K_HYST){
+      const prev = cur;
+      cur = clamp(Math.round(minsFloat), 1, 240);
+      commitMinutes(cur, prev);
     }
-    const min = clamp(Math.round(startMin + accum / 6), 1, 240);
-    if (min !== Math.round(T.durationMs / 60000)){
-      T.durationMs = min * 60000;
-      T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
-      S.settings.lastDurMin = min;
-      S.settings.hintSeen = true;
-      buzz(4); paintDial(); markPreset(); save();
-    }
+    paintIdle(cur, clamp((minsFloat - cur) * 6 * K_ELAS, -3.5, 3.5));
   });
+
   const end = e => {
-    if (!dragging) return;
-    dragging = false; dial.classList.remove('is-dragging');
-    try { dial.releasePointerCapture(e.pointerId); } catch(err){}
-    renderFocus();
+    if (e.pointerId !== dragPid) return;
+    dragPid = null;
+    dial.classList.remove('is-drag');
+    $('#gHead').style.willChange = '';
+    try { band.releasePointerCapture(e.pointerId); } catch(err){}
+    minsFloat = cur;
+    paintIdle(cur, 0);
+    buzz(8);
+    announce(cur);
+    save(); renderFocus();                               // enda skrivningen i hela gesten
   };
-  dial.addEventListener('pointerup', end);
-  dial.addEventListener('pointercancel', end);
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => band.addEventListener(ev, end));
+
+  let wheelAccum = 0;
+  band.addEventListener('wheel', e => {
+    if (T.status !== 'idle') return;
+    e.preventDefault();
+    wheelAccum += e.deltaY;
+    while (Math.abs(wheelAccum) >= 50){
+      const dir = wheelAccum > 0 ? -1 : 1;
+      wheelAccum -= dir * -50;
+      setMinutes(clamp(cur + dir, 1, 240));
+    }
+  }, { passive: false });
+
+  band.addEventListener('keydown', e => {
+    if (T.status !== 'idle') return;
+    const big = e.shiftKey ? 5 : 1;
+    const map = { ArrowRight: big, ArrowUp: big, ArrowLeft: -big, ArrowDown: -big,
+                  PageUp: 15, PageDown: -15 };
+    let v = null;
+    if (e.key in map) v = clamp(cur + map[e.key], 1, 240);
+    else if (e.key === 'Home') v = 1;
+    else if (e.key === 'End')  v = 240;
+    if (v === null) return;
+    e.preventDefault();
+    flyToMin(v, 160);
+  });
+}
+
+/* Sätt ett värde direkt, utan flygning. */
+function setMinutes(v){
+  if (v === cur) return;
+  const prev = cur;
+  cur = minsFloat = v;
+  commitMinutes(v, prev);
+  paintIdle(cur, 0);
+  save();
+}
+
+/* Ett steg passerat: skriv värdet i minnet och kvittera. */
+function commitMinutes(next, prev){
+  T.durationMs = next * 60000;
+  T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
+  S.settings.lastDurMin = next;
+  S.settings.hintSeen = true;
+  markPreset();
+  ariaUpdate(next);
+
+  const newLap = lapsOf(next) !== lapsOf(prev);
+  const now = performance.now();
+  if (now - lastBuzzAt >= 40){
+    lastBuzzAt = now;
+    if (newLap)                    buzz([10, 40, 10, 40, 14]);
+    else if (PRESETS.includes(next)) buzz([4, 30, 4]);
+    else if (next % 5 === 0)        buzz(9);
+    else                            buzz(3);
+  }
+  if (next % 5 === 0) flashOnce('#core', 'blink', 130);
+  if (newLap)         flashOnce('#dialTime', 'pop', 180);
+}
+
+function flashOnce(sel, cls, ms){
+  if (reduceMotion.matches) return;
+  const el = $(sel); if (!el) return;
+  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+let edgeAt = 0;
+function edgeFlash(){
+  const now = performance.now();
+  if (now - edgeAt < 400) return;              // en gång, inte varje bildruta
+  edgeAt = now; buzz(2); flashOnce('#edge', 'flash', 180);
+}
+
+/* Ljuset rinner till fingret — 260 ms instruktion utan text. */
+function flyToAngle(ang){
+  let a = Math.round(ang / 6); if (a === 0) a = 60;
+  const lap = lapsOf(cur);
+  const target = [lap - 1, lap, lap + 1].map(L => L * 60 + a)
+    .filter(v => v >= 1 && v <= 240)
+    .sort((x, y) => Math.abs(x - cur) - Math.abs(y - cur))[0];
+  const arcDeg = Math.abs(((target - cur) % 60) * 6);
+  flyToMin(target, Math.min(260, 140 + arcDeg * 0.55));
+}
+
+function flyToMin(target, dur){
+  target = clamp(Math.round(target), 1, 240);
+  const from = cur;
+  if (target === from) return;
+  // rAF fryser i en dold flik — hoppa direkt i stället för att aldrig landa
+  if (reduceMotion.matches || document.hidden){ setMinutes(target); announce(target); return; }
+
+  flying = true;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true; flying = false; clearTimeout(guard);
+    const prev = cur;
+    cur = minsFloat = target;
+    commitMinutes(target, prev);
+    paintIdle(cur, 0);
+    buzz(8); announce(target); save();
+  };
+  const guard = setTimeout(finish, dur + 300);   // skyddsnät om bildrutorna uteblir
+
+  const delta = target - from, t0 = performance.now();
+  const step = now => {
+    if (done) return;
+    const t = Math.min(1, (now - t0) / dur);
+    const v = from + delta * (1 - Math.pow(1 - t, 3));
+    const whole = Math.round(v);
+    paintIdle(whole, (v - whole) * 6);
+    if (t < 1) requestAnimationFrame(step); else finish();
+  };
+  requestAnimationFrame(step);
+}
+
+function ariaUpdate(v){
+  const now = performance.now();
+  if (now - lastAriaAt < 120) return;
+  lastAriaAt = now;
+  const b = $('#dialBand');
+  b.setAttribute('aria-valuenow', v);
+  b.setAttribute('aria-valuetext', fmtDur(v * 60000));
+}
+function announce(v){
+  $('#dialBand').setAttribute('aria-valuenow', v);
+  $('#dialBand').setAttribute('aria-valuetext', fmtDur(v * 60000));
+  $('#dialLive').textContent = fmtDur(v * 60000);
+}
+
+/* Gesten visas i stället för att beskrivas — en gång per session. */
+function maybeNudge(){
+  if (nudged || S.settings.hintSeen || T.status !== 'idle') return;
+  nudged = true;
+  if (reduceMotion.matches){
+    const h = $('#dialHint');
+    h.textContent = 'Dra runt ringen'; h.hidden = false;
+    setTimeout(() => { h.hidden = true; }, 4000);
+    return;
+  }
+  setTimeout(() => {
+    if (T.status !== 'idle' || dragPid !== null || flying) return;
+    const t0 = performance.now(), dur = 620;
+    const step = now => {
+      const t = Math.min(1, (now - t0) / dur);
+      paintIdle(cur, -7 * Math.sin(t * Math.PI));
+      if (t < 1) requestAnimationFrame(step); else paintIdle(cur, 0);
+    };
+    requestAnimationFrame(step);
+  }, 900);
 }
 
 /* ── steppers ────────────────────────────────────────────── */
@@ -532,10 +762,9 @@ function renderPresets(){
   $('#chipCustom').addEventListener('click', () => { if (timeLocked()) return; buzz(8); openSheet('time'); });
   $$('#presets .chip[data-min]').forEach(el => el.addEventListener('click', () => {
     if (timeLocked()) return;
-    T.durationMs = +el.dataset.min * 60000;
-    T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
-    S.settings.lastDurMin = +el.dataset.min;
-    buzz(8); renderFocus(); save();
+    const m = +el.dataset.min;
+    buzz(8);
+    flyToMin(m, Math.abs(m - cur) > 60 ? 560 : 420);   // användaren SER mekaniken röra sig
   }));
 }
 
@@ -879,23 +1108,15 @@ function closeSheet(){
   setTimeout(() => { s.hidden = true; s.classList.remove('is-closing'); $('#sheetBackdrop').hidden = true; }, 260);
 }
 
-/* ── celebration ─────────────────────────────────────────── */
-function celebrate(){
-  const host = $('#celebrate'); host.hidden = false; host.innerHTML = '';
-  const colors = [catById(T.catId).c, catById(T.catId).hi, '#fff'];
-  const cx = innerWidth / 2, cy = innerHeight * .42;
-  for (let i = 0; i < 26; i++){
-    const s = document.createElement('i');
-    const ang = Math.random() * Math.PI * 2, dist = 90 + Math.random() * 220;
-    s.style.left = cx + 'px'; s.style.top = cy + 'px';
-    s.style.background = colors[i % colors.length];
-    s.style.setProperty('--dx', `${Math.cos(ang) * dist}px`);
-    s.style.setProperty('--dy', `${Math.sin(ang) * dist + 160}px`);
-    s.style.setProperty('--rot', `${Math.random() * 720 - 360}deg`);
-    s.style.animationDelay = (Math.random() * .12) + 's';
-    host.appendChild(s);
-  }
-  setTimeout(() => { host.hidden = true; host.innerHTML = ''; }, 1900);
+/* ── klart: ljuset fylls, ratten andas ut ────────────────── */
+function doneSequence(){
+  const dial = $('#dial'), aura = $('.dial__aura');
+  paintRing(1, 360);
+  if (reduceMotion.matches) return;
+  dial.classList.add('is-done');
+  aura.style.opacity = '.55';
+  setTimeout(() => { aura.style.opacity = ''; }, 1600);
+  setTimeout(() => dial.classList.remove('is-done'), 1900);
 }
 
 /* ── navigation ──────────────────────────────────────────── */
