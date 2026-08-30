@@ -112,11 +112,25 @@ function buzz(pattern){
   if (!S.settings.haptics) return;
   try { navigator.vibrate?.(pattern); } catch(e){}
 }
-let ac = null;
+let ac = null, acIdle = null;
 function audio(){
+  clearTimeout(acIdle);
   if (!ac){ const C = window.AudioContext || window.webkitAudioContext; if (C) ac = new C(); }
-  if (ac && ac.state === 'suspended') ac.resume();
+  // iOS sätter state till 'interrupted' vid appväxling, inte 'suspended'.
+  // Bara resume från 'suspended' gjorde ljudet permanent dött efter första växlingen.
+  if (ac && ac.state !== 'running') ac.resume().catch(() => {});
   return ac;
+}
+/* En vaken AudioContext håller en aktiv ljudsession — det enda i appen som
+   fortsätter kosta ström med släckt skärm. Somna när ingenting låter. */
+function acSleepSoon(){
+  clearTimeout(acIdle);
+  acIdle = setTimeout(() => {
+    // aldrig under ett pass: WebKit kan vägra resume() utan gest, och
+    // sluttonen kommer inte från en gest
+    if (T.status !== 'running' && dragPid === null && !flying
+        && ac && ac.state === 'running') ac.suspend().catch(() => {});
+  }, 4000);
 }
 function tone(freq, at, dur, vol = .18, type = 'sine'){
   const a = audio(); if (!a) return;
@@ -127,7 +141,9 @@ function tone(freq, at, dur, vol = .18, type = 'sine'){
   g.gain.linearRampToValueAtTime(vol, t0 + .012);
   g.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
   o.connect(g); g.connect(a.destination);
+  o.onended = () => { try { o.disconnect(); g.disconnect(); } catch(e){} };
   o.start(t0); o.stop(t0 + dur + .05);
+  acSleepSoon();
 }
 /* Ett detentklick, inte en pipsignal. Två partialer med snabb
    exponentiell död: en torr transient upptill och lite kropp under.
@@ -154,11 +170,13 @@ function detent(dir, kind){
     g.gain.linearRampToValueAtTime(gain, t0 + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
     o.connect(g); g.connect(a.destination);
+    o.onended = () => { try { o.disconnect(); g.disconnect(); } catch(e){} };
     o.start(t0); o.stop(t0 + len + 0.02);
   };
   click(bas * lut, vol, dur, 'triangle');           // transienten
   click(bas * lut * 0.5, vol * 0.55, dur * 1.6, 'sine');   // kroppen
   if (kind === 'hour') click(320, 0.09, 0.12, 'sine');     // hel timme: en dov stöt
+  acSleepSoon();
 }
 
 const sndStart = () => { if (S.settings.sound){ tone(523.25, 0, .28, .12); tone(783.99, .06, .34, .09); } };
@@ -178,6 +196,7 @@ function toast(msg, ms = 2600){
 /* ── notifications ───────────────────────────────────────── */
 let swReg = null;
 const notifSupported = 'Notification' in window;
+const hasVibe = typeof navigator.vibrate === 'function';   // saknas helt i Safari/iOS
 
 function notifyGranted(){
   return notifSupported && Notification.permission === 'granted';
@@ -224,14 +243,26 @@ async function fireNow(title, body){
 }
 
 /* ── wake lock ───────────────────────────────────────────── */
-let wake = null;
+let wake = null, wakeReq = null;
 async function wakeOn(){
   if (!S.settings.keepAwake || !('wakeLock' in navigator)) return;
-  try { wake = await navigator.wakeLock.request('screen'); } catch(e){}
+  if (wake || wakeReq) return;                 // aldrig två samtidiga begäran
+  try {
+    wakeReq = navigator.wakeLock.request('screen');
+    wake = await wakeReq;
+    wake.addEventListener('release', () => { wake = null; });
+  } catch(e){}
+  finally { wakeReq = null; }
 }
-function wakeOff(){ try { wake?.release(); } catch(e){} wake = null; }
+async function wakeOff(){ const w = wake; wake = null; try { await w?.release(); } catch(e){} }
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden){ clearInterval(loopId); loopId = null; wakeOff(); return; }
+  if (document.hidden){
+    clearInterval(loopId); loopId = null; wakeOff();
+    try { ac?.suspend(); } catch(e){}
+    return;
+  }
+  audio();                                    // före tick: passet kan ha tagit slut
   if (T.status === 'running') wakeOn();
   tick(true);
   loop();
@@ -331,7 +362,7 @@ function tick(force){
   if (T.status === 'running'){
     // samma kvantitet som fmtClock visar, annars hoppar värdet
     const rem = remaining(), sec = Math.ceil(rem / 1000 - 1e-6);
-    if (sec === lastSec && !force) return;      // 1000 ms-transitionen får löpa klart
+    if (sec === lastSec && !force) return;      // rita bara när siffran faktiskt ändras
     lastSec = sec;
     document.body.classList.toggle('is-endgame', rem <= 10000);
     paintDial(force);                            // force = återkomst från bakgrunden
@@ -349,7 +380,7 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const lapsOf = m => Math.floor((m - 1) / 60);
 const arcOf  = m => m - lapsOf(m) * 60;        // alltid 1–60
 
-let minsFloat = 25, cur = 25, dragPid = null, flying = false;
+let minsFloat = 25, cur = 25, dragPid = null, flying = false, flightCancel = null;
 let lastSec = -1, shownLaps = -1, lastBuzzAt = 0, lastAriaAt = 0, nudged = false;
 
 /* En graverad skala. Aldrig accentfärgad, aldrig omritad. */
@@ -666,8 +697,9 @@ function setMinutes(v){
 
 /* Ett steg passerat: skriv värdet i minnet och kvittera. */
 function commitMinutes(next, prev){
+  // Rör ALDRIG status här. En flygning landar hundratals ms efter gesten,
+  // och hann användaren trycka Starta emellan raderades passet.
   T.durationMs = next * 60000;
-  T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
   S.settings.lastDurMin = next;
   S.settings.hintSeen = true;
   markPreset();
@@ -715,8 +747,9 @@ function flyToAngle(ang){
 
 function flyToMin(target, dur){
   target = clamp(Math.round(target), 1, 240);
-  const from = cur;
-  if (target === from) return;
+  flightCancel?.();                    // sista trycket ska vinna
+  const from = minsFloat;              // fortsätt där ljuset faktiskt står
+  if (Math.abs(from - target) < 0.01) return;
   // rAF fryser i en dold flik — hoppa direkt i stället för att aldrig landa
   if (reduceMotion.matches || document.hidden){ setMinutes(target); announce(target); return; }
 
@@ -724,7 +757,10 @@ function flyToMin(target, dur){
   let done = false;
   const finish = () => {
     if (done) return;
-    done = true; flying = false; clearTimeout(guard);
+    if (T.status !== 'idle'){          // ett pass hann starta — landa tyst
+      done = true; flying = false; flightCancel = null; clearTimeout(guard); return;
+    }
+    done = true; flying = false; flightCancel = null; clearTimeout(guard);
     const prev = cur;
     cur = minsFloat = target;
     commitMinutes(target, prev);
@@ -732,12 +768,14 @@ function flyToMin(target, dur){
     buzz(8); announce(target); save();
   };
   const guard = setTimeout(finish, dur + 300);   // skyddsnät om bildrutorna uteblir
+  flightCancel = () => { done = true; flying = false; clearTimeout(guard); };
 
   const delta = target - from, t0 = performance.now();
   const step = now => {
-    if (done) return;
+    if (done || T.status !== 'idle'){ flying = false; return; }
     const t = Math.min(1, (now - t0) / dur);
     const v = from + delta * (1 - Math.pow(1 - t, 3));
+    minsFloat = v;                     // avbryts flygningen vet nästa var ljuset står
     const whole = Math.round(v);
     paintIdle(whole, (v - whole) * 6);
     if (t < 1) requestAnimationFrame(step); else finish();
@@ -773,6 +811,7 @@ function maybeNudge(){
     if (T.status !== 'idle' || dragPid !== null || flying) return;
     const t0 = performance.now(), dur = 620;
     const step = now => {
+      if (T.status !== 'idle' || dragPid !== null) return;
       const t = Math.min(1, (now - t0) / dur);
       paintIdle(cur, -7 * Math.sin(t * Math.PI));
       if (t < 1) requestAnimationFrame(step); else paintIdle(cur, 0);
@@ -794,14 +833,15 @@ function wireSteppers(root){
     t = clamp(t, MIN_MS / 1000, 240 * 60);
     T.durationMs = t * 1000; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
     S.settings.lastDurMin = Math.round(t / 60);
-    buzz(5); renderFocus(); save();
+    paintSteppers(); markPreset(); paintDial();   // allt steppern faktiskt rör
   };
   $$('.stepper__btn', root).forEach(btn => {
     const unit = btn.closest('.stepper').dataset.unit;
     const dir  = +btn.dataset.dir;
     let hold = null, rep = null;
     const go   = () => step(unit, dir);
-    const stop = () => { clearTimeout(hold); clearInterval(rep); hold = rep = null; stopAll.delete(stop); };
+    const stop = () => { clearTimeout(hold); clearInterval(rep); hold = rep = null;
+                         stopAll.delete(stop); renderFocus(); save(); };   // tungt först vid släpp
     btn.addEventListener('pointerdown', e => {
       try { btn.setPointerCapture(e.pointerId); } catch(err){}
       go();
@@ -997,12 +1037,14 @@ function toggleOn(k){
 }
 function renderSettings(){
   $('#toggles').innerHTML = TOGGLES.map(([k, t, d]) => {
-    const on = toggleOn(k);
+    const on = k === 'haptics' ? (hasVibe && S.settings.haptics) : toggleOn(k);
     const desc = k === 'notify' && !on
       ? (notifSupported ? 'Behörighet saknas — tryck för att tillåta' : 'Stöds inte i den här webbläsaren')
+      : k === 'haptics' && !hasVibe ? 'Stöds inte på iPhone — Safari saknar Vibration API'
       : d;
     return `<div class="row"><div><div class="row__t">${t}</div><div class="row__d">${desc}</div></div>
-      <button type="button" class="switch ${on ? 'is-on' : ''}" data-k="${k}" role="switch" aria-checked="${on}" aria-label="${t}"></button></div>`;
+      <button type="button" class="switch ${on ? 'is-on' : ''}" data-k="${k}" role="switch"
+        aria-checked="${on}" aria-label="${t}" ${k === 'haptics' && !hasVibe ? 'disabled' : ''}></button></div>`;
   }).join('');
   $$('#toggles .switch').forEach(el => el.addEventListener('click', async () => {
     const k = el.dataset.k;
@@ -1012,6 +1054,10 @@ function renderSettings(){
       S.settings.notify = !S.settings.notify;
     } else {
       S.settings[k] = !S.settings[k];
+      if (k === 'keepAwake'){
+        if (S.settings.keepAwake){ if (T.status === 'running') wakeOn(); }
+        else wakeOff();
+      }
     }
     buzz(8); save(); renderSettings();
   }));
@@ -1263,9 +1309,6 @@ function init(){
 
   renderAll(); loop();
 
-  // unlock audio on the first real interaction
-  const unlock = () => { audio(); removeEventListener('pointerdown', unlock); };
-  addEventListener('pointerdown', unlock, { once:true });
   addEventListener('beforeunload', saveNow);
   addEventListener('pagehide', saveNow);
 
