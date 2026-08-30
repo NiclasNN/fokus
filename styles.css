@@ -166,6 +166,10 @@ h1,h2,p{margin:0;}
 .corner.is-on:active{transform:scale(1);}
 body.is-running .corner:not(.is-on){opacity:.4;transform:scale(.9);}
 body.is-running .corner:not(.is-on):active{transform:scale(.86);}
+/* tiden och uppgiften är låsta under ett pass — dämpade, men fortfarande
+   tryckbara så vakten hinner förklara varför */
+body.is-running .presets,
+body.is-running .taskstrip{opacity:.42;}
 .corner--tl{top:0;left:0}
 .corner--tr{top:0;right:0}
 .corner--bl{bottom:0;left:0}

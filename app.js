@@ -145,6 +145,11 @@ function toast(msg, ms = 2600){
 let swReg = null;
 const notifSupported = 'Notification' in window;
 
+function notifyGranted(){
+  return notifSupported && Notification.permission === 'granted';
+}
+let warnedNoAlarm = false;
+
 async function ensureNotifyPermission(interactive){
   if (!notifSupported) return 'unsupported';
   if (Notification.permission === 'granted') return 'granted';
@@ -211,6 +216,10 @@ function startTimer(){
   T.status = 'running';
   T.startedAt = Date.now();
   save(); sndStart(); buzz(12); wakeOn();
+  if (S.settings.notify && !notifyGranted() && !warnedNoAlarm){
+    warnedNoAlarm = true;
+    toast('Inget larm i bakgrunden — slå på notiser under Mer', 3600);
+  }
   const c = catById(T.catId);
   scheduleAlarm(Date.now() + remaining(), 'Passet är klart 🎉',
                 `${sessionTitle()} — ${fmtDur(T.durationMs)} avklarat`);
@@ -258,6 +267,17 @@ function logSession(ms, endedAt){
   if (task){ task.focusedMs = (task.focusedMs || 0) + ms; task.sessions = (task.sessions || 0) + 1; }
   saveNow();
 }
+/* Ett pass som har tid på sig äger tiden, uppgiften och livsområdet.
+   Allt som skulle skriva över dem går igenom den här vakten först. */
+function timeLocked(){
+  if (T.status === 'idle') return false;
+  toast(T.status === 'running'
+    ? 'Pausa passet först — eller spara det med bocken'
+    : 'Nollställ eller spara passet först');
+  buzz(12);
+  return true;
+}
+
 function currentTask(){ return S.tasks.find(x => x.id === T.taskId) || null; }
 function sessionTitle(){ return currentTask()?.title || catById(T.catId).name; }
 
@@ -330,7 +350,10 @@ function renderFocus(){
                             : paused  ? 'Pausad'
                             : task ? task.title
                             : 'Redo att starta';
-  $('#dialHint').hidden = S.settings.hintSeen || T.status !== 'idle';
+  const hint = $('#dialHint');
+  if (paused){ hint.textContent = 'Pausad — nollställ för att ändra tiden'; hint.hidden = false; }
+  else if (running){ hint.hidden = true; }
+  else { hint.textContent = 'Dra runt ringen för att ställa tiden'; hint.hidden = S.settings.hintSeen; }
   $('#btnReset').disabled = T.status === 'idle' && T.elapsedBefore === 0;
   $('#btnDone').disabled  = T.status === 'idle';
 
@@ -357,6 +380,7 @@ function renderTaskStrip(){
   $('#tchipAdd').addEventListener('click', () => { buzz(8); openSheet('task'); });
 
   $$('.tchip[data-id]', host).forEach(el => el.addEventListener('click', ev => {
+    if (timeLocked()) return;
     const id = el.dataset.id;
     const t = S.tasks.find(x => x.id === id);
     if (!t) return;
@@ -396,6 +420,7 @@ function renderCorners(){
   }).join('');
   $$('.corner', host).forEach(el => el.addEventListener('click', () => {
     if (el.dataset.id === T.catId) return;
+    if (timeLocked()) return;
     buzz(10);
     T.catId = el.dataset.id; T.taskId = null; taskCat = T.catId;
     save(); renderFocus();
@@ -416,15 +441,23 @@ function renderCats(host, onPick){
 /* ── dial drag ───────────────────────────────────────────── */
 function initDial(){
   const dial = $('#dial');
-  let dragging = false, lastAng = 0, accum = 0, startMin = 0;
+  let dragging = false, lastAng = 0, accum = 0, startMin = 0, armed = false;
 
   const angleAt = e => {
     const r = dial.getBoundingClientRect();
     return Math.atan2(e.clientY - (r.top + r.height/2), e.clientX - (r.left + r.width/2)) * 180 / Math.PI;
   };
+  // andel av radien — nära centrum ger några pixlar tiotals grader, och
+  // kvadratens hörn ligger utanför ringen
+  const radiusAt = e => {
+    const r = dial.getBoundingClientRect();
+    return Math.hypot(e.clientX - (r.left + r.width/2), e.clientY - (r.top + r.height/2)) / (r.width / 2);
+  };
   dial.addEventListener('pointerdown', e => {
-    if (T.status === 'running') return;
-    dragging = true; accum = 0;
+    if (T.status !== 'idle') return;          // pausad tid får inte raderas
+    const rel = radiusAt(e);
+    if (rel < 0.55 || rel > 1.02) return;     // död zon i mitten och utanför ringen
+    dragging = true; accum = 0; armed = false;
     startMin = Math.round(T.durationMs / 60000);
     lastAng = angleAt(e);
     try { dial.setPointerCapture(e.pointerId); } catch(err){}
@@ -436,6 +469,10 @@ function initDial(){
     let d = a - lastAng;
     if (d > 180) d -= 360; if (d < -180) d += 360;
     lastAng = a; accum += d;
+    if (!armed){                               // ett tryck ska aldrig bli ett minutsprång
+      if (Math.abs(accum) < 8) return;
+      armed = true;
+    }
     const min = clamp(Math.round(startMin + accum / 6), 1, 240);
     if (min !== Math.round(T.durationMs / 60000)){
       T.durationMs = min * 60000;
@@ -462,6 +499,7 @@ const stopAll = new Set();
 
 function wireSteppers(root){
   const step = (unit, dir) => {
+    if (T.status !== 'idle') return;
     const mult = unit === 'h' ? 3600 : unit === 'm' ? 60 : 5;
     let t = Math.round(T.durationMs / 1000) + dir * mult;
     t = clamp(t, MIN_MS / 1000, 240 * 60);
@@ -491,8 +529,9 @@ function renderPresets(){
   $('#presets').innerHTML = PRESETS.map(m =>
     `<button type="button" class="chip" data-min="${m}">${m < 60 ? m + ' min' : (m/60 % 1 ? (m/60).toFixed(1) : m/60) + ' h'}</button>`
   ).join('') + '<button type="button" class="chip" id="chipCustom">Egen tid</button>';
-  $('#chipCustom').addEventListener('click', () => { buzz(8); openSheet('time'); });
+  $('#chipCustom').addEventListener('click', () => { if (timeLocked()) return; buzz(8); openSheet('time'); });
   $$('#presets .chip[data-min]').forEach(el => el.addEventListener('click', () => {
+    if (timeLocked()) return;
     T.durationMs = +el.dataset.min * 60000;
     T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
     S.settings.lastDurMin = +el.dataset.min;
@@ -570,6 +609,7 @@ function wireTasks(root){
         buzz(12); save(); renderTasks(); renderCatDots(); renderFocus();
       }
       if (act === 'start'){
+        if (timeLocked()) return;
         T.catId = t.catId; T.taskId = t.id;
         T.durationMs = t.durationMs; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
         save(); go('focus'); renderFocus();
@@ -664,17 +704,28 @@ const TOGGLES = [
   ['keepAwake', 'Håll skärmen vaken','Under pågående pass'],
   ['notify',    'Notiser',           'Larm även när appen ligger i bakgrunden'],
 ];
+function toggleOn(k){
+  return k === 'notify' ? (S.settings.notify && notifyGranted()) : !!S.settings[k];
+}
 function renderSettings(){
-  $('#toggles').innerHTML = TOGGLES.map(([k, t, d]) => `
-    <div class="row"><div><div class="row__t">${t}</div><div class="row__d">${d}</div></div>
-    <button type="button" class="switch ${S.settings[k] ? 'is-on' : ''}" data-k="${k}" role="switch" aria-checked="${!!S.settings[k]}" aria-label="${t}"></button></div>`).join('');
-  $$('#toggles .switch').forEach(el => el.addEventListener('click', () => {
+  $('#toggles').innerHTML = TOGGLES.map(([k, t, d]) => {
+    const on = toggleOn(k);
+    const desc = k === 'notify' && !on
+      ? (notifSupported ? 'Behörighet saknas — tryck för att tillåta' : 'Stöds inte i den här webbläsaren')
+      : d;
+    return `<div class="row"><div><div class="row__t">${t}</div><div class="row__d">${desc}</div></div>
+      <button type="button" class="switch ${on ? 'is-on' : ''}" data-k="${k}" role="switch" aria-checked="${on}" aria-label="${t}"></button></div>`;
+  }).join('');
+  $$('#toggles .switch').forEach(el => el.addEventListener('click', async () => {
     const k = el.dataset.k;
-    S.settings[k] = !S.settings[k];
-    el.classList.toggle('is-on', S.settings[k]);
-    el.setAttribute('aria-checked', String(S.settings[k]));
-    buzz(8); save();
-    if (k === 'notify' && S.settings[k]) enableNotifications();
+    if (k === 'notify'){
+      if (!notifSupported){ toast('Den här webbläsaren stöder inte notiser'); return; }
+      if (!notifyGranted()){ S.settings.notify = true; save(); buzz(8); await enableNotifications(); return; }
+      S.settings.notify = !S.settings.notify;
+    } else {
+      S.settings[k] = !S.settings[k];
+    }
+    buzz(8); save(); renderSettings();
   }));
 
   $$('#themeSeg button').forEach(b => {
@@ -684,7 +735,7 @@ function renderSettings(){
 
   const perm = notifSupported ? Notification.permission : 'unsupported';
   $('#notifyText').textContent = perm === 'granted' ? 'Notiser är på' : 'Aktivera notiser';
-  $('#btnNotify').disabled = perm === 'granted';
+  $('#btnNotify').hidden = perm === 'granted';
   $('#notifyStatus').innerHTML =
     perm === 'granted' ? notifyCapabilityText()
   : perm === 'denied'  ? 'Notiser är blockerade i webbläsarens inställningar för den här sidan.'
@@ -867,7 +918,7 @@ function initShortcuts(){
   const view = q.get('view');
   if (view && ['focus','tasks','stats','settings'].includes(view)) go(view);
   const quick = parseInt(q.get('quick'), 10);
-  if (quick > 0 && quick <= 240 && T.status !== 'running'){
+  if (quick > 0 && quick <= 240 && T.status === 'idle'){
     T.durationMs = quick * 60000; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
     renderFocus();
     setTimeout(startTimer, 300);
