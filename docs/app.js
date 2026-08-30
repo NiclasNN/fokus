@@ -1076,7 +1076,13 @@ function renderSettings(){
   : perm === 'unsupported' ? 'Den här webbläsaren stöder inte notiser — larmet spelas i appen istället.'
   : 'Tillåt notiser så pinglar Fokus dig när passet är slut.';
 
-  $('#appVersion').textContent = 'v' + VERSION;
+  // Mätvärden från enheten — så vi slipper gissa vad iOS gör med viewporten
+  const cs = getComputedStyle(document.documentElement);
+  const px = v => Math.round(parseFloat(cs.getPropertyValue(v)) || 0);
+  const st = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  $('#appVersion').textContent =
+    `v${VERSION} · ${innerWidth}×${innerHeight} av ${screen.width}×${screen.height}` +
+    ` · marginal ${px('--sat')}/${px('--sab')} · ${st ? 'hemskärm' : 'webbläsare'}`;
   storageInfo();
 }
 function notifyCapabilityText(){
