@@ -1,5 +1,7 @@
 /* Fokus — service worker: offline shell + timer alarm */
-const CACHE = 'fokus-v1.0.2';
+const CACHE = 'fokus-v1.0.3';
+const ALARM_CACHE = 'fokus-alarm';        // notistext som reserv om pushen saknar nyttolast
+const PUSH_URL = 'https://fokus-push.juridiskaistottning.workers.dev';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
@@ -11,7 +13,8 @@ self.addEventListener('install', e => {
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    // ALARM_CACHE måste överleva — annars försvinner notistexten vid varje uppdatering
+    .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== ALARM_CACHE).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
@@ -50,16 +53,37 @@ self.addEventListener('message', e => {
 self.addEventListener('push', e => {
   e.waitUntil((async () => {
     let title = 'Passet är klart 🎉', body = '';
-    try {
-      const c = await caches.open('fokus-alarm');
-      const r = await c.match(new URL('__alarm', self.registration.scope).href);
-      if (r){ const d = await r.json(); title = d.title || title; body = d.body || body; }
-    } catch(err){}
+    try { const d = e.data?.json(); if (d){ title = d.title || title; body = d.body || body; } } catch(err){}
+    if (!body){                                   // reserv om nyttolasten uteblir
+      try {
+        const c = await caches.open(ALARM_CACHE);
+        const r = await c.match(new URL('__alarm', self.registration.scope).href);
+        if (r){ const d = await r.json(); title = d.title || title; body = d.body || body; }
+      } catch(err){}
+    }
     await self.registration.showNotification(title, {
       body, tag:'fokus-timer', renotify:true, requireInteraction:true,
       icon:'icons/icon-192.png', badge:'icons/badge.png',
       vibrate:[220, 90, 220, 90, 380],
     });
+  })());
+});
+
+/* iOS kan rotera prenumerationen. Utan det här slutar larmet fungera tyst. */
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil((async () => {
+    if (!PUSH_URL) return;
+    try {
+      const old = e.oldSubscription;
+      if (old) await fetch(PUSH_URL + '/cancel', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ subscription: old.toJSON(), seq: Date.now() }),
+      }).catch(() => {});
+      await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: old?.options?.applicationServerKey,
+      });
+    } catch(err){}
   })());
 });
 

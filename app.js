@@ -5,7 +5,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 const KEY = 'fokus.state.v1';
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -23,7 +23,7 @@ const MIN_MS  = 60000;
 /* Push-servern knackar på telefonen när passet tar slut. Utan den kan iOS
    inte väcka appen med släckt skärm — det finns inget web-API för det. */
 const VAPID_PUBLIC = 'BK_YVWPUw7jW3k5SYXOkxqVxz5xsy5P-A6AqG0YYMJ27wjsnQssvjk2VVahoaoPARjFE_G--nE4_H_4a2PtRQL8';
-const PUSH_URL = '';   // fylls i när servern är deployad   // ett pass under en minut varken startas, sparas eller räknas
+const PUSH_URL = 'https://fokus-push.juridiskaistottning.workers.dev';   // ett pass under en minut varken startas, sparas eller räknas
 
 /* ── utils ───────────────────────────────────────────────── */
 const p2   = n => String(n).padStart(2, '0');
@@ -237,14 +237,23 @@ async function pushSubscription(){
   } catch(e){ console.log('kunde inte prenumerera på push', e); return null; }
 }
 
-async function serverSchedule(endsAt){
+async function serverSchedule(endsAt, title, body){
   const sub = await pushSubscription();
   if (!sub) return;
   try {
-    await fetch(PUSH_URL + '/schedule', {
+    const res = await fetch(PUSH_URL + '/schedule', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ subscription: sub.toJSON(), endsAt }),
+      body: JSON.stringify({ subscription: sub.toJSON(), endsAt, seq: Date.now(), title, body }),
     });
+    const out = await res.json().catch(() => ({}));
+    if (out.gone){                       // prenumerationen är död — skapa en ny
+      await sub.unsubscribe().catch(() => {});
+      const fresh = await pushSubscription();
+      if (fresh) await fetch(PUSH_URL + '/schedule', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ subscription: fresh.toJSON(), endsAt, seq: Date.now(), title, body }),
+      });
+    }
   } catch(e){}
 }
 async function serverCancel(){
@@ -255,7 +264,7 @@ async function serverCancel(){
   try {
     await fetch(PUSH_URL + '/cancel', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ subscription: sub.toJSON() }),
+      body: JSON.stringify({ subscription: sub.toJSON(), seq: Date.now() }),
     });
   } catch(e){}
 }
@@ -271,7 +280,7 @@ async function scheduleAlarm(endsAt, title, body){
     data:{ endsAt },
   };
   await stashAlarmText(title, body);
-  serverSchedule(endsAt);          // enda vägen som når en släckt iPhone
+  serverSchedule(endsAt, title, body);   // enda vägen som når en släckt iPhone
   // Chromium: fires even when the app is closed.
   if ('showTrigger' in Notification.prototype && window.TimestampTrigger){
     try { await reg.showNotification(title, { ...opts, showTrigger: new TimestampTrigger(endsAt) }); return; }
@@ -337,6 +346,9 @@ function startTimer(){
   if (S.settings.notify && !notifyGranted() && !warnedNoAlarm){
     warnedNoAlarm = true;
     toast('Inget larm i bakgrunden — slå på notiser under Mer', 3600);
+  } else if (S.settings.notify && notifyGranted() && !PUSH_URL && !warnedNoAlarm){
+    warnedNoAlarm = true;
+    toast('Larmet väcker inte en släckt skärm ännu', 3400);
   }
   const c = catById(T.catId);
   scheduleAlarm(Date.now() + remaining(), 'Passet är klart 🎉',
