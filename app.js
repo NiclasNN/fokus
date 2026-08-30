@@ -5,7 +5,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.5';
+const VERSION = '1.0.6';
 const KEY = 'fokus.state.v1';
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];

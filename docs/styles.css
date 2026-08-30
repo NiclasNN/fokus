@@ -502,17 +502,17 @@ body.is-paused #headPuck{transform:scale(.8);transition-duration:.24s;}
 /* ── tabbar ────────────────────────────────────────────── */
 .tabbar{flex:none;z-index:40;
   display:grid;grid-template-columns:repeat(4,1fr);
-  padding:8px 10px max(8px, var(--sab));
+  padding:5px 10px max(6px, var(--sab));
   /* Egen yta, inte samma färg som sidan. Annars läses barens nedre
      säkerhetsmarginal som tom app i stället för som en del av baren. */
   background:var(--surface);
   border-top:1px solid var(--line);
   box-shadow:0 -10px 28px -22px rgba(19,28,54,.30);}
 :root[data-theme="dark"] .tabbar{background:var(--bg-elev);box-shadow:none;}
-.tab{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;border-radius:14px;
-  color:var(--muted);font-size:10.5px;font-weight:600;letter-spacing:.01em;
+.tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:3px 0;border-radius:12px;
+  color:var(--muted);font-size:10px;font-weight:600;letter-spacing:.01em;
   transition:color .28s var(--ease),transform .2s var(--ease-snap);}
-.tab .ic{width:22px;height:22px;transition:transform .3s var(--ease-snap);}
+.tab .ic{width:20px;height:20px;transition:transform .3s var(--ease-snap);}
 .tab:active{transform:scale(.9);}
 .tab.is-active{color:var(--accent);}
 .tab.is-active .ic{transform:translateY(-1px);}
