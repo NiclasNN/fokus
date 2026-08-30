@@ -28,8 +28,8 @@
   --ease:cubic-bezier(.22,1,.36,1);
   --ease-snap:cubic-bezier(.34,1.56,.64,1);
 
-  --sat:env(safe-area-inset-top);
-  --sab:env(safe-area-inset-bottom);
+  --sat:env(safe-area-inset-top, 0px);
+  --sab:env(safe-area-inset-bottom, 0px);
   --topbarh:calc(var(--sat) + 54px);
   --cw:clamp(74px,21.5vw,92px);
 }
@@ -155,10 +155,13 @@ body.sheet-open .grain{display:none;}
 /* ── focus stage & corners ─────────────────────────────── */
 :root{ --topbarh:calc(var(--sat) + 54px); --cw:clamp(74px,21.5vw,92px); }
 
-.view--focus.is-active{position:relative;display:flex;align-items:center;justify-content:center;
-  min-height:100%;
-  padding-block:4px;}
-.focuscol{display:flex;flex-direction:column;align-items:center;gap:13px;width:100%;}
+/* height, inte min-height: vyn får inte växa, för då komprimeras ingenting
+   och ratten skulle aldrig krympa. padding-block reserverar hörnraderna. */
+.view--focus.is-active{position:relative;display:flex;flex-direction:column;
+  height:100%;
+  padding-block:calc(var(--cw) + 8px);}
+.focuscol{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:13px;width:100%;}
 
 .corners{position:absolute;inset:0;pointer-events:none;z-index:2;}
 .corner{
@@ -244,8 +247,10 @@ body.is-running .taskstrip,body.is-paused .taskstrip{opacity:.42;}
 .cat.has-tasks .cat__dot{opacity:.85;}
 
 /* ── dial: "Glöd" — ett upplyst föremål, inte en ritad båge ─ */
-.dialwrap{display:flex;flex-direction:column;align-items:center;}
-.dial{position:relative;width:min(63vw,252px);aspect-ratio:1;user-select:none;-webkit-user-select:none;}
+/* Ratten är det som ger vika när lådan blir trång. Höjden driver, aspect-ratio
+   härleder bredden — då förblir den rund i stället för att bli oval. */
+.dialwrap{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;}
+.dial{position:relative;flex:0 1 auto;min-height:168px;height:min(63vw,252px);width:auto;aspect-ratio:1;user-select:none;-webkit-user-select:none;}
 
 /* Bandet ÄR gesten. inset -24px så ytterkanten nås även rakt uppåt, och
    clip-path styr träffprovet så kvadratens hörn aldrig stjäl ett tryck. */
@@ -491,7 +496,7 @@ body.is-paused #headPuck{transform:scale(.8);transition-duration:.24s;}
 /* ── tabbar ────────────────────────────────────────────── */
 .tabbar{flex:none;z-index:40;
   display:grid;grid-template-columns:repeat(4,1fr);
-  padding:8px 10px calc(var(--sab) + 8px);
+  padding:8px 10px max(8px, var(--sab));
   background:var(--bg);
   border-top:1px solid var(--line);}
 .tab{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;border-radius:14px;
@@ -547,7 +552,7 @@ body[data-view="focus"] .toasts{top:calc(var(--topbarh) + var(--cw) + 14px);}
 
 @media (max-height:720px){
   :root{--cw:clamp(64px,18.5vw,78px);}
-  .dial{width:min(55vw,212px);}
+  .dial{height:min(55vw,212px);}
   .focuscol{gap:8px;}
   .corner{border-radius:22px;}
   .corner .ic{width:21px;height:21px;}
