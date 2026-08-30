@@ -4,3 +4,7 @@
 # macOS
 .DS_Store
 
+
+# lokal editor-/värdkoppling med absoluta sökvägar
+.vscode/mcp.json
+.netlify/
