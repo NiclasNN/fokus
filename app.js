@@ -1136,12 +1136,22 @@ function openSheet(mode = 'task'){
     setTimeout(() => $('#sheetAddInput')?.focus(), 340);
   }
   $('#sheet').hidden = false; $('#sheetBackdrop').hidden = false;
+  // när scrimen hunnit bli ogenomskinlig: koppla bort de dyra lagren
+  clearTimeout(sheetOpenAt);
+  sheetOpenAt = setTimeout(() => document.body.classList.add('sheet-open'), 180);
 }
+let sheetOpenAt = null;
 function closeSheet(){
   const s = $('#sheet');
   if (s.hidden || s.classList.contains('is-closing')) return;
+  if (document.activeElement && s.contains(document.activeElement)) document.activeElement.blur();
+  clearTimeout(sheetOpenAt);
   s.classList.add('is-closing');
-  setTimeout(() => { s.hidden = true; s.classList.remove('is-closing'); $('#sheetBackdrop').hidden = true; }, 260);
+  setTimeout(() => {
+    s.hidden = true; s.classList.remove('is-closing');
+    $('#sheetBackdrop').hidden = true;
+    document.body.classList.remove('sheet-open');   // först när arket är borta
+  }, 260);
 }
 
 /* ── klart: ljuset fylls, ratten andas ut ────────────────── */
