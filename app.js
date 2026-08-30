@@ -127,6 +127,38 @@ function tone(freq, at, dur, vol = .18, type = 'sine'){
   o.connect(g); g.connect(a.destination);
   o.start(t0); o.stop(t0 + dur + .05);
 }
+/* Ett detentklick, inte en pipsignal. Två partialer med snabb
+   exponentiell död: en torr transient upptill och lite kropp under.
+   Tonhöjden stiger när man drar upp och sjunker när man drar ner. */
+let lastTickAt = 0;
+function detent(dir, kind){
+  if (!S.settings.sound) return;
+  const a = audio(); if (!a) return;
+  const t0 = a.currentTime;
+  if (t0 - lastTickAt < 0.022) return;        // tak vid snabba drag
+  lastTickAt = t0;
+
+  const bas  = kind === 'hour' ? 1500 : kind === 'five' ? 2500 : 2050;
+  const lut  = dir > 0 ? 1.06 : 0.94;         // upp ljusare, ner mörkare
+  const vol  = kind === 'min' ? 0.05 : kind === 'five' ? 0.075 : 0.1;
+  const dur  = kind === 'hour' ? 0.05 : 0.016;
+
+  const click = (freq, gain, len, type) => {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    o.frequency.exponentialRampToValueAtTime(freq * 0.72, t0 + len);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+    o.connect(g); g.connect(a.destination);
+    o.start(t0); o.stop(t0 + len + 0.02);
+  };
+  click(bas * lut, vol, dur, 'triangle');           // transienten
+  click(bas * lut * 0.5, vol * 0.55, dur * 1.6, 'sine');   // kroppen
+  if (kind === 'hour') click(320, 0.09, 0.12, 'sine');     // hel timme: en dov stöt
+}
+
 const sndStart = () => { if (S.settings.sound){ tone(523.25, 0, .28, .12); tone(783.99, .06, .34, .09); } };
 const sndDone  = () => { if (!S.settings.sound) return;
   [880, 1108.73, 1318.51, 1760].forEach((f, i) => tone(f, i * .16, 1.5 - i * .18, .2 - i * .03)); };
@@ -524,6 +556,7 @@ function initDial(){
     const { rad, ang, k, half } = polar(e);
     if (rad < 56 || rad > Math.min(half + 24, 142)) return;
 
+    audio();                                    // låses upp av just den här gesten
     dragPid = e.pointerId;
     try { band.setPointerCapture(dragPid); } catch(err){}
     dial.classList.add('is-drag');
@@ -618,13 +651,16 @@ function commitMinutes(next, prev){
   ariaUpdate(next);
 
   const newLap = lapsOf(next) !== lapsOf(prev);
+  const dir = next > prev ? 1 : -1;
+  detent(dir, newLap ? 'hour' : next % 5 === 0 ? 'five' : 'min');
+
   const now = performance.now();
   if (now - lastBuzzAt >= 40){
     lastBuzzAt = now;
-    if (newLap)                    buzz([10, 40, 10, 40, 14]);
-    else if (PRESETS.includes(next)) buzz([4, 30, 4]);
-    else if (next % 5 === 0)        buzz(9);
-    else                            buzz(3);
+    if (newLap)                      buzz([12, 40, 12, 40, 18]);
+    else if (PRESETS.includes(next)) buzz([6, 26, 6]);
+    else if (next % 5 === 0)         buzz(14);
+    else                             buzz(7);
   }
   if (next % 5 === 0) flashOnce('#core', 'blink', 130);
   if (newLap)         flashOnce('#dialTime', 'pop', 180);
@@ -928,7 +964,7 @@ function renderHeader(){
 
 /* ── settings ────────────────────────────────────────────── */
 const TOGGLES = [
-  ['sound',     'Ljudsignal',        'Mjuk klocka när passet är slut'],
+  ['sound',     'Ljud',              'Tick när du ställer tiden, klocka när passet är slut'],
   ['haptics',   'Vibration',         'Taktil respons på telefonen'],
   ['keepAwake', 'Håll skärmen vaken','Under pågående pass'],
   ['notify',    'Notiser',           'Larm även när appen ligger i bakgrunden'],
@@ -1127,7 +1163,7 @@ function go(view){
   if (view === 'tasks')    { renderDurPick(); renderTasks(); }
   if (view === 'stats')    renderStats();
   if (view === 'settings') renderSettings();
-  scrollTo({ top:0, behavior:'smooth' });
+  $('.stage').scrollTo({ top:0, behavior:'smooth' });
 }
 function renderAll(){ renderHeader(); renderFocus(); renderCatDots();
   if (document.body.dataset.view === 'stats') renderStats();
