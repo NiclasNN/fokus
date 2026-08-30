@@ -1080,9 +1080,12 @@ function renderSettings(){
   const cs = getComputedStyle(document.documentElement);
   const px = v => Math.round(parseFloat(cs.getPropertyValue(v)) || 0);
   const st = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const perm2 = notifSupported ? Notification.permission : 'saknas';
+  const push  = 'PushManager' in window ? 'push-API finns' : 'ingen push-API';
   $('#appVersion').textContent =
     `v${VERSION} · ${innerWidth}×${innerHeight} av ${screen.width}×${screen.height}` +
-    ` · marginal ${px('--sat')}/${px('--sab')} · ${st ? 'hemskärm' : 'webbläsare'}`;
+    ` · marginal ${px('--sat')}/${px('--sab')} · ${st ? 'hemskärm' : 'webbläsare'}` +
+    ` · notiser: ${perm2} · ${push} · vibration: ${hasVibe ? 'finns' : 'saknas'}`;
   storageInfo();
 }
 function notifyCapabilityText(){
