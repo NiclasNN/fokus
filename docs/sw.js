@@ -1,5 +1,5 @@
 /* Fokus — service worker: offline shell + timer alarm */
-const CACHE = 'fokus-v1.0.6';
+const CACHE = 'fokus-v1.0.7';
 const ALARM_CACHE = 'fokus-alarm';        // notistext som reserv om pushen saknar nyttolast
 const PUSH_URL = 'https://fokus-push.juridiskaistottning.workers.dev';
 const ASSETS = [

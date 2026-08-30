@@ -5,7 +5,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.6';
+const VERSION = '1.0.7';
 const KEY = 'fokus.state.v1';
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -101,6 +101,7 @@ mq.addEventListener?.('change', () => { if (S.settings.theme === 'system') apply
 
 function applyAccent(){
   const c = catById(S.timer.catId);
+  document.body.dataset.cat = c.id;      // rummet tonas efter valt livsområde
   const r = document.documentElement.style;
   r.setProperty('--accent', c.c);
   r.setProperty('--accent-hi', c.hi);
