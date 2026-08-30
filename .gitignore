@@ -1,0 +1,5 @@
+# Repowise-index — genereras om av `repowise init`, ska inte versionshanteras
+.repowise/
+
+# macOS
+.DS_Store
