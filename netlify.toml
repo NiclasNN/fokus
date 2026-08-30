@@ -1,5 +1,5 @@
 [build]
-  publish = "dist"
+  publish = "docs"
   command = "node build.mjs"
 
 # Service workern måste alltid hämtas färsk, annars fastnar appen i en

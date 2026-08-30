@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fokus — fyra livsområden</title>
+<meta name="description" content="En premium fokustimer för fyra livsområden. Fungerar offline, sparar allt lokalt på din enhet och pinglar dig när passet är klart.">
+<meta name="theme-color" content="#EDF1FA">
+<meta name="color-scheme" content="dark light">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fokus">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="focus">
+
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-social" viewBox="0 0 24 24"><circle cx="9" cy="7.5" r="3.6"/><path d="M2.6 20.5v-1.4a4.4 4.4 0 0 1 4.4-4.4h4a4.4 4.4 0 0 1 4.4 4.4v1.4"/><path d="M16.6 4.3a3.6 3.6 0 0 1 0 6.9M18 14.9a4.4 4.4 0 0 1 3.4 4.3v1.3"/></symbol>
+  <symbol id="i-struktur" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></symbol>
+  <symbol id="i-pengar" viewBox="0 0 24 24"><path d="M12 2.2v19.6"/><path d="M17 6.2H9.7a3.3 3.3 0 0 0 0 6.6h4.6a3.3 3.3 0 0 1 0 6.6H6.4"/></symbol>
+  <symbol id="i-halsa" viewBox="0 0 24 24"><path d="M20.5 5.3a5 5 0 0 0-7.1 0L12 6.7l-1.4-1.4a5 5 0 1 0-7.1 7.1L12 21l8.5-8.6a5 5 0 0 0 0-7.1z"/></symbol>
+  <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V13M12 20V4M19 20v-9"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.1 14.4a1.6 1.6 0 0 0 .3 1.8l.1.1a1.9 1.9 0 1 1-2.7 2.7l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2a1.9 1.9 0 1 1-3.8 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a1.9 1.9 0 1 1 0-3.8h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a1.9 1.9 0 1 1 3.8 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.2a1.9 1.9 0 1 1 0 3.8h-.1a1.6 1.6 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.6c0-.8.9-1.3 1.6-.9l10 6.4c.6.4.6 1.4 0 1.8l-10 6.4c-.7.4-1.6-.1-1.6-.9z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1.6" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 5.5v5h5"/><path d="M3.6 14a8.5 8.5 0 1 0 1.2-6.6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6.5 9.6 17 4 11.4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3.5 6.5h17M9 6.5V4.8A1.3 1.3 0 0 1 10.3 3.5h3.4A1.3 1.3 0 0 1 15 4.8v1.7"/><path d="M5.8 6.5 6.7 19a1.6 1.6 0 0 0 1.6 1.5h7.4a1.6 1.6 0 0 0 1.6-1.5l.9-12.5"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8.6a6 6 0 1 0-12 0c0 6-2.2 7.6-2.2 7.6h16.4S18 14.6 18 8.6z"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15.5V3.4M8.4 6.8 12 3.2l3.6 3.6"/><path d="M5 12.5v6.4a1.6 1.6 0 0 0 1.6 1.6h10.8a1.6 1.6 0 0 0 1.6-1.6v-6.4"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 2.8s5.6 4 5.6 9.2a5.6 5.6 0 0 1-11.2 0c0-1.6.6-2.9 1.4-4 .3 1.2 1 2 1.9 2.2 0-2.9.9-5.6 2.3-7.4z"/></symbol>
+</defs></svg>
+
+<div class="ambient" aria-hidden="true"><i class="ambient__a"></i><i class="ambient__b"></i><i class="ambient__c"></i><i class="ambient__d"></i></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand__mark" aria-hidden="true"></span>
+    <span class="brand__text">Fokus</span>
+  </div>
+  <div class="topbar__right">
+    <button class="pill pill--timer" id="timerPill" type="button" hidden
+            title="Tillbaka till passet"><span class="pill__dot"></span><span id="timerPillText">00:00</span></button>
+    <button class="pill pill--streak" id="streakPill" type="button" title="Dagar i rad">
+      <svg class="ic"><use href="#i-flame"></use></svg><span id="streakVal">0</span>
+    </button>
+    <button class="pill pill--today" id="todayPill" type="button" title="Fokuserad tid idag">
+      <span id="todayVal">0 min</span>
+    </button>
+  </div>
+</header>
+
+<main class="stage">
+
+  <!-- ── FOKUS ───────────────────────────────────────────── -->
+  <section class="view view--focus is-active" id="view-focus">
+    <div class="corners" id="cats" role="tablist" aria-label="Livsområde"></div>
+
+    <div class="focuscol">
+      <div class="dialwrap">
+        <div class="dial" id="dial">
+          <i class="dial__band" id="dialBand" role="slider" tabindex="0"
+             aria-label="Passets längd" aria-valuemin="1" aria-valuemax="240"
+             aria-valuenow="25" aria-valuetext="25 minuter"></i>
+          <div class="dial__bed"  aria-hidden="true"></div>
+          <div class="dial__aura" aria-hidden="true"></div>
+
+          <svg class="dial__svg" viewBox="0 0 260 260" aria-hidden="true">
+            <defs>
+              <linearGradient id="grooveGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stop-color="var(--groove-lo)"/>
+                <stop offset="100%" stop-color="var(--groove-hi)"/>
+              </linearGradient>
+              <linearGradient id="coreGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%"   stop-color="var(--light-core)"/>
+                <stop offset="100%" stop-color="var(--accent)"/>
+              </linearGradient>
+              <radialGradient id="bloomGrad" gradientUnits="userSpaceOnUse" cx="130" cy="130" r="124">
+                <stop offset="0%"    stop-color="var(--accent)" stop-opacity="0"/>
+                <stop offset="66%"   stop-color="var(--accent)" stop-opacity="0"/>
+                <stop offset="80.6%" stop-color="var(--accent)" stop-opacity=".50"/>
+                <stop offset="88%"   stop-color="var(--accent)" stop-opacity=".16"/>
+                <stop offset="100%"  stop-color="var(--accent)" stop-opacity="0"/>
+              </radialGradient>
+              <radialGradient id="haloGrad">
+                <stop offset="0%"   stop-color="var(--accent)" stop-opacity=".5"/>
+                <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+              </radialGradient>
+              <linearGradient id="puckGrad" x1="0" y1="0" x2=".55" y2="1">
+                <stop offset="0%"   stop-color="rgba(255,255,255,.92)"/>
+                <stop offset="100%" stop-color="var(--accent-hi)"/>
+              </linearGradient>
+              <mask id="arcMask">
+                <circle id="arcMaskArc" cx="130" cy="130" r="100" fill="none" stroke="#fff"
+                        stroke-width="30" stroke-linecap="round" transform="rotate(-90 130 130)"/>
+              </mask>
+            </defs>
+
+            <circle id="plate" cx="130" cy="130" r="118"/>
+            <g class="dial__ticks" id="ticks"></g>
+            <circle class="dial__lip dial__lip--out" cx="130" cy="130" r="107.5"/>
+            <circle id="groove" cx="130" cy="130" r="100"/>
+            <circle class="dial__lip dial__lip--in" cx="130" cy="130" r="92.5"/>
+            <circle class="dial__glass" cx="130" cy="130" r="117.5"/>
+            <g id="gLaps"></g>
+            <g mask="url(#arcMask)">
+              <circle id="bloom" cx="130" cy="130" r="124" fill="url(#bloomGrad)"/>
+            </g>
+            <g transform="rotate(-90 130 130)">
+              <circle id="trail" cx="130" cy="130" r="100"/>
+              <circle id="core"  cx="130" cy="130" r="100"/>
+            </g>
+            <g id="gHead">
+              <circle id="headHalo" cx="130" cy="30" r="26" fill="url(#haloGrad)"/>
+              <g id="headInner">
+                <circle id="headPuck" cx="130" cy="30" r="11" fill="url(#puckGrad)"/>
+                <circle id="headSpec" cx="126" cy="26" r="3"/>
+              </g>
+            </g>
+            <circle id="edge" cx="130" cy="130" r="118"/>
+          </svg>
+
+          <div class="dial__face">
+            <div class="dial__cat" id="dialCat">STRUKTUR</div>
+            <button class="dial__time" id="dialTime" type="button" aria-label="Ändra tid"><span
+              id="dialNum">25</span><span class="dial__unit" id="dialUnit">min</span></button>
+            <div class="dial__sub" id="dialSub">Redo att starta</div>
+          </div>
+          <span class="sr-only" id="dialLive" aria-live="polite"></span>
+        </div>
+        <p class="dial__hint" id="dialHint" hidden></p>
+      </div>
+
+      <div class="taskstrip" id="taskStrip" aria-label="Uppgifter i valt område"></div>
+
+      <div class="presets" id="presets"></div>
+
+      <div class="controls">
+        <button class="btn btn--ghost" id="btnReset" type="button" aria-label="Nollställ"><svg class="ic"><use href="#i-reset"></use></svg></button>
+        <button class="btn btn--primary" id="btnPlay" type="button"><svg class="ic"><use href="#i-play"></use></svg><span id="btnPlayText">Starta</span></button>
+        <button class="btn btn--ghost" id="btnDone" type="button" aria-label="Avsluta och spara"><svg class="ic"><use href="#i-check"></use></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── UPPGIFTER ───────────────────────────────────────── -->
+  <section class="view view--tasks" id="view-tasks">
+    <h1 class="vtitle">Uppgifter</h1>
+    <div class="cats cats--compact" id="catsTasks" role="tablist" aria-label="Livsområde"></div>
+    <form class="addrow" id="addForm" autocomplete="off">
+      <input class="addrow__input" id="addInput" type="text" placeholder="Vad ska du göra?" maxlength="90" enterkeyhint="done">
+      <button class="addrow__go" type="submit" aria-label="Lägg till"><svg class="ic"><use href="#i-plus"></use></svg></button>
+    </form>
+    <p class="fieldlabel">Tid per pass</p>
+    <div class="durpick" id="durPick"></div>
+    <div class="tasklist" id="taskList"></div>
+    <div class="donewrap" id="doneWrap"></div>
+  </section>
+
+  <!-- ── STATISTIK ───────────────────────────────────────── -->
+  <section class="view view--stats" id="view-stats">
+    <h1 class="vtitle">Statistik</h1>
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <div class="card__head"><h2>Senaste 7 dagarna</h2><span id="weekTotal" class="card__meta"></span></div>
+      <div class="week" id="week"></div>
+    </div>
+    <div class="card">
+      <div class="card__head"><h2>Balans mellan områden</h2><span id="balanceMeta" class="card__meta"></span></div>
+      <div class="balance" id="balance"></div>
+    </div>
+    <div class="card">
+      <div class="card__head"><h2>Senaste passen</h2></div>
+      <div class="sessions" id="sessions"></div>
+    </div>
+  </section>
+
+  <!-- ── INSTÄLLNINGAR ───────────────────────────────────── -->
+  <section class="view view--settings" id="view-settings">
+    <h1 class="vtitle">Inställningar</h1>
+
+    <div class="card" id="installCard" hidden>
+      <div class="card__head"><h2>Installera på telefonen</h2></div>
+      <p class="muted" id="installText">Lägg till Fokus på hemskärmen så körs den i helskärm, offline och kan visa notiser.</p>
+      <button class="btn btn--wide" id="btnInstall" type="button">Installera appen</button>
+      <ol class="howto" id="iosHowto" hidden>
+        <li>Tryck på <b>Dela</b> <svg class="ic ic--sm"><use href="#i-share"></use></svg> längst ner i Safari</li>
+        <li>Välj <b>Lägg till på hemskärmen</b></li>
+        <li>Öppna Fokus från hemskärmen och tillåt notiser</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>Notiser & larm</h2></div>
+      <button class="btn btn--wide" id="btnNotify" type="button"><svg class="ic"><use href="#i-bell"></use></svg><span id="notifyText">Aktivera notiser</span></button>
+      <p class="muted small" id="notifyStatus"></p>
+      <div class="rows" id="toggles"></div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>Utseende</h2></div>
+      <div class="segmented" id="themeSeg">
+        <button type="button" data-theme="system">System</button>
+        <button type="button" data-theme="dark">Mörkt</button>
+        <button type="button" data-theme="light">Ljust</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>Dina data</h2></div>
+      <p class="muted small">Allt sparas lokalt på den här enheten. Inget konto, ingen server, inget lämnar telefonen.</p>
+      <div class="btnrow">
+        <button class="btn btn--soft" id="btnExport" type="button">Exportera</button>
+        <button class="btn btn--soft" id="btnImport" type="button">Importera</button>
+        <button class="btn btn--danger" id="btnWipe" type="button">Rensa allt</button>
+      </div>
+      <input type="file" id="importFile" accept="application/json" hidden>
+      <p class="muted small" id="storageInfo"></p>
+    </div>
+
+    <p class="version">Fokus <span id="appVersion"></span> · byggd för fyra livsområden</p>
+  </section>
+</main>
+
+<nav class="tabbar" id="tabbar">
+  <button type="button" data-tab="focus" aria-label="Fokus" class="tab is-active"><svg class="ic"><use href="#i-focus"></use></svg><span>Fokus</span></button>
+  <button type="button" data-tab="tasks" aria-label="Uppgifter" class="tab"><svg class="ic"><use href="#i-list"></use></svg><span>Uppgifter</span></button>
+  <button type="button" data-tab="stats" aria-label="Statistik" class="tab"><svg class="ic"><use href="#i-chart"></use></svg><span>Statistik</span></button>
+  <button type="button" data-tab="settings" aria-label="Mer" class="tab"><svg class="ic"><use href="#i-gear"></use></svg><span>Mer</span></button>
+</nav>
+
+<div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="Välj uppgift">
+  <div class="sheet__grip"></div>
+  <div class="sheet__head"><h2 id="sheetTitle">Välj uppgift</h2><button class="iconbtn" id="sheetClose" type="button" aria-label="Stäng"><svg class="ic"><use href="#i-x"></use></svg></button></div>
+  <div class="sheet__body" id="sheetBody"></div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

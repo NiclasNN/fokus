@@ -4,5 +4,3 @@
 # macOS
 .DS_Store
 
-# byggutdata för deploy
-dist/
