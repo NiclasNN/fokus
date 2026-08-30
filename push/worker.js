@@ -203,6 +203,11 @@ async function signJwt(aud, env) {
 }
 
 async function sendPush(sub, text, env) {
+  // Utan fail-fast blir en saknad hemlighet ett tyst SyntaxError i alarm()
+  if (!env.VAPID_PRIVATE_JWK || !env.VAPID_PUBLIC ||
+      !/^(mailto:|https:)/.test(env.VAPID_SUBJECT || '')) {
+    throw new Error('VAPID-konfiguration saknas');
+  }
   if (!validEndpoint(sub.endpoint)) return 400;           // försvar på djupet
   const aud  = new URL(sub.endpoint).origin;
   const jwt  = await signJwt(aud, env);

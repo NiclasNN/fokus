@@ -5,7 +5,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.3';
+const VERSION = '1.0.4';
 const KEY = 'fokus.state.v1';
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -229,11 +229,18 @@ async function pushSubscription(){
   const reg = swReg || (await navigator.serviceWorker?.ready.catch(() => null));
   if (!reg) return null;
   try {
-    return await reg.pushManager.getSubscription()
-        || await reg.pushManager.subscribe({
-             userVisibleOnly: true,
-             applicationServerKey: VAPID_PUBLIC,
-           });
+    const cur = await reg.pushManager.getSubscription();
+    if (cur){
+      // Hör den till samma VAPID-nyckel? Annars är den värdelös och måste bytas.
+      const k = cur.options?.applicationServerKey;
+      const same = !k || btoa(String.fromCharCode(...new Uint8Array(k)))
+        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'') === VAPID_PUBLIC;
+      if (same) return cur;
+      await cur.unsubscribe().catch(() => {});
+    }
+    return await reg.pushManager.subscribe({
+      userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC,
+    });
   } catch(e){ console.log('kunde inte prenumerera på push', e); return null; }
 }
 
@@ -269,6 +276,12 @@ async function serverCancel(){
   } catch(e){}
 }
 
+/* Larmets text på ETT ställe. Skrevs den olika i startTimer och vid
+   återupptagning tappade notisen uppgiftens namn bara för att appen öppnats. */
+function alarmText(){
+  return ['Passet är klart 🎉', `${sessionTitle()} — ${fmtDur(T.durationMs)} avklarat`];
+}
+
 async function scheduleAlarm(endsAt, title, body){
   if (!S.settings.notify || !notifSupported || Notification.permission !== 'granted') return;
   const reg = swReg || (await navigator.serviceWorker?.ready.catch(() => null));
@@ -280,7 +293,7 @@ async function scheduleAlarm(endsAt, title, body){
     data:{ endsAt },
   };
   await stashAlarmText(title, body);
-  serverSchedule(endsAt, title, body);   // enda vägen som når en släckt iPhone
+  await serverSchedule(endsAt, title, body);   // enda vägen som når en släckt iPhone
   // Chromium: fires even when the app is closed.
   if ('showTrigger' in Notification.prototype && window.TimestampTrigger){
     try { await reg.showNotification(title, { ...opts, showTrigger: new TimestampTrigger(endsAt) }); return; }
@@ -293,7 +306,7 @@ async function cancelAlarm(){
   const reg = swReg || (await navigator.serviceWorker?.ready.catch(() => null));
   if (!reg) return;
   reg.active?.postMessage({ type:'cancel' });
-  serverCancel();
+  await serverCancel();
   try { (await reg.getNotifications({ tag:'fokus-timer' })).forEach(n => n.close()); } catch(e){}
 }
 async function fireNow(title, body){
@@ -350,9 +363,7 @@ function startTimer(){
     warnedNoAlarm = true;
     toast('Larmet väcker inte en släckt skärm ännu', 3400);
   }
-  const c = catById(T.catId);
-  scheduleAlarm(Date.now() + remaining(), 'Passet är klart 🎉',
-                `${sessionTitle()} — ${fmtDur(T.durationMs)} avklarat`);
+  scheduleAlarm(Date.now() + remaining(), ...alarmText());
   renderFocus();
 }
 function pauseTimer(){
@@ -381,6 +392,7 @@ function completeTimer(at = Date.now()){
   T.status = 'idle'; T.elapsedBefore = 0; T.startedAt = 0;
   save(); wakeOff(); loop();
   sndDone(); buzz([220, 90, 220, 90, 380]);
+  cancelAlarm();                       // annars knackar servern på strax efteråt
   fireNow('Passet är klart 🎉', `${catById(T.catId).name} · ${fmtDur(ms)} fokuserat`);
   doneSequence();
   renderAll();
@@ -1117,6 +1129,7 @@ function renderSettings(){
       if (!notifSupported){ toast('Den här webbläsaren stöder inte notiser'); return; }
       if (!notifyGranted()){ S.settings.notify = true; save(); buzz(8); await enableNotifications(); return; }
       S.settings.notify = !S.settings.notify;
+      if (!S.settings.notify) serverCancel();      // inget larm ska ligga kvar hos servern
     } else {
       S.settings[k] = !S.settings[k];
       if (k === 'keepAwake'){
@@ -1379,7 +1392,7 @@ function init(){
   // resume a timer that was running when the app was closed
   if (T.status === 'running'){
     if (remaining() <= 0) completeTimer(Math.min(T.startedAt + (T.durationMs - T.elapsedBefore), Date.now()));
-    else { wakeOn(); scheduleAlarm(Date.now() + remaining(), 'Passet är klart 🎉', catById(T.catId).name); }
+    else { wakeOn(); scheduleAlarm(Date.now() + remaining(), ...alarmText()); }
   }
 
   renderAll(); loop();
