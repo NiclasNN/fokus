@@ -97,27 +97,26 @@ h1,h2,p{margin:0;}
   transition:opacity .8s var(--ease);}
 .ambient__a{width:min(96vw,560px);aspect-ratio:1;top:-16vh;left:-26vw;opacity:.30;
   background:radial-gradient(circle at 50% 50%, #FF5C7A 0%, transparent 66%);
-  animation:drift 28s ease-in-out infinite alternate;}
+}
 .ambient__b{width:min(96vw,560px);aspect-ratio:1;top:-20vh;right:-28vw;opacity:.30;
   background:radial-gradient(circle at 50% 50%, #4C8DFF 0%, transparent 66%);
-  animation:drift 34s ease-in-out infinite alternate-reverse;}
+}
 .ambient__c{width:min(96vw,560px);aspect-ratio:1;bottom:-20vh;left:-28vw;opacity:.22;
   background:radial-gradient(circle at 50% 50%, #14C08C 0%, transparent 66%);
-  animation:drift 31s ease-in-out infinite alternate-reverse;}
+}
 .ambient__d{width:min(96vw,560px);aspect-ratio:1;bottom:-18vh;right:-28vw;opacity:.24;
   background:radial-gradient(circle at 50% 50%, #F5B443 0%, transparent 66%);
-  animation:drift 25s ease-in-out infinite alternate;}
+}
 :root[data-theme="dark"] .ambient i{opacity:.2;filter:blur(70px);}
-@keyframes drift{from{transform:translate3d(0,0,0) scale(1);}to{transform:translate3d(6%,5%,0) scale(1.14);}}
 
 /* Ett öppet ark täcker ändå allt. Fyra stora blurrar och ett blend-lager ska
    inte ligga och rasteriseras om medan tangentbordet animerar. */
 body.sheet-open .ambient,
 body.sheet-open .grain{display:none;}
 
-.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.14;mix-blend-mode:overlay;
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.055;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");}
-:root[data-theme="dark"] .grain{opacity:.4;}
+:root[data-theme="dark"] .grain{opacity:.16;}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.08s !important;}
@@ -325,18 +324,14 @@ body.is-running .taskstrip,body.is-paused .taskstrip{opacity:.42;}
 .dial.is-jump #trail{transition:none !important;}
 
 /* Under körning skrivs värdet en gång per sekund och glider dit. */
-body.is-running #gHead,body.is-running #core,body.is-running #arcMaskArc{
-  transition:transform 1000ms linear, stroke-dashoffset 1000ms linear;}
 body.is-running .dial__aura{animation:auraBreathe 4200ms ease-in-out infinite alternate;}
-body.is-running .ambient i{animation-play-state:paused;}
 body.is-running #headHalo{opacity:.4;}
 @keyframes auraBreathe{to{opacity:calc(var(--aura-op) * 1.45);}}
 body.is-endgame .dial__aura{animation-duration:1200ms;}
 
-body.is-paused #core{animation:corePulse 2800ms ease-in-out infinite;}
-body.is-paused .dial__aura{opacity:.06;}
+body.is-paused .dial__aura{opacity:.06;animation:corePulse 3200ms ease-in-out infinite;}
 body.is-paused #headPuck{transform:scale(.8);transition-duration:.24s;}
-@keyframes corePulse{50%{opacity:.55;}}
+@keyframes corePulse{50%{opacity:.14;}}
 
 .dial.is-done .dial__svg{animation:dialExhale .7s var(--ease-snap) .3s;}
 @keyframes dialExhale{35%{transform:scale(1.05);}}

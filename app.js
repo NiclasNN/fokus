@@ -28,7 +28,9 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`; };
 
 function fmtClock(ms){
-  const t = Math.max(0, Math.round(ms / 1000));
+  // ceil, inte round: en nedräkning ska visa 25:00 tills den faktiskt
+  // passerat 25:00, och 00:01 hela sista sekunden.
+  const t = Math.max(0, Math.ceil(ms / 1000 - 1e-6));
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
   return h ? `${h}:${p2(m)}:${p2(s)}` : `${p2(m)}:${p2(s)}`;
 }
@@ -49,7 +51,7 @@ const defaults = () => ({
   tasks: [],
   sessions: [],
   timer: { status:'idle', catId:'struktur', taskId:null, durationMs: 25*60*1000, startedAt:0, elapsedBefore:0 },
-  settings: { theme:'light', sound:true, haptics:true, keepAwake:true, notify:true, lastDurMin:25, hintSeen:false },
+  settings: { theme:'light', sound:true, haptics:true, keepAwake:false, notify:true, lastDurMin:25, hintSeen:false },
 });
 
 let S = load();
@@ -229,10 +231,10 @@ async function wakeOn(){
 }
 function wakeOff(){ try { wake?.release(); } catch(e){} wake = null; }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible'){
-    if (T.status === 'running') wakeOn();
-    tick(true);
-  }
+  if (document.hidden){ clearInterval(loopId); loopId = null; wakeOff(); return; }
+  if (T.status === 'running') wakeOn();
+  tick(true);
+  loop();
 });
 
 /* ── timer engine ────────────────────────────────────────── */
@@ -247,7 +249,7 @@ function startTimer(){
   if (T.status === 'idle') T.elapsedBefore = 0;
   T.status = 'running';
   T.startedAt = Date.now();
-  save(); sndStart(); buzz(12); wakeOn();
+  save(); sndStart(); buzz(12); wakeOn(); loop();
   if (S.settings.notify && !notifyGranted() && !warnedNoAlarm){
     warnedNoAlarm = true;
     toast('Inget larm i bakgrunden — slå på notiser under Mer', 3600);
@@ -261,12 +263,12 @@ function pauseTimer(){
   if (T.status !== 'running') return;
   T.elapsedBefore += Date.now() - T.startedAt;
   T.status = 'paused';
-  save(); buzz(10); wakeOff(); cancelAlarm();
+  save(); buzz(10); wakeOff(); cancelAlarm(); loop();
   renderFocus();
 }
 function resetTimer(){
   T.status = 'idle'; T.elapsedBefore = 0; T.startedAt = 0;
-  save(); buzz(8); wakeOff(); cancelAlarm();
+  save(); buzz(8); wakeOff(); cancelAlarm(); loop();
   renderFocus();
 }
 function finishEarly(){
@@ -281,7 +283,7 @@ function completeTimer(at = Date.now()){
   const ms = T.durationMs;
   logSession(ms, at);
   T.status = 'idle'; T.elapsedBefore = 0; T.startedAt = 0;
-  save(); wakeOff();
+  save(); wakeOff(); loop();
   sndDone(); buzz([220, 90, 220, 90, 380]);
   fireNow('Passet är klart 🎉', `${catById(T.catId).name} · ${fmtDur(ms)} fokuserat`);
   doneSequence();
@@ -312,7 +314,14 @@ function currentTask(){ return S.tasks.find(x => x.id === T.taskId) || null; }
 function sessionTitle(){ return currentTask()?.title || catById(T.catId).name; }
 
 let loopId = null;
-function loop(){ clearInterval(loopId); loopId = setInterval(() => tick(), 240); }
+/* 240 ms-intervallet startades vid init och stoppades aldrig — det tickade
+   vidare i vila, i bakgrunden och med skärmen släckt. Nu lever det bara
+   medan något faktiskt räknar ner och appen är synlig. */
+function loop(){
+  clearInterval(loopId); loopId = null;
+  if (T.status !== 'running' || document.hidden) return;
+  loopId = setInterval(() => tick(), 240);
+}
 function tick(force){
   if (T.status === 'running' && remaining() <= 0){
     const at = T.startedAt + (T.durationMs - T.elapsedBefore);
@@ -320,7 +329,8 @@ function tick(force){
     return;
   }
   if (T.status === 'running'){
-    const rem = remaining(), sec = Math.floor(rem / 1000);
+    // samma kvantitet som fmtClock visar, annars hoppar värdet
+    const rem = remaining(), sec = Math.ceil(rem / 1000 - 1e-6);
     if (sec === lastSec && !force) return;      // 1000 ms-transitionen får löpa klart
     lastSec = sec;
     document.body.classList.toggle('is-endgame', rem <= 10000);
@@ -979,7 +989,7 @@ function renderHeader(){
 const TOGGLES = [
   ['sound',     'Ljud',              'Tick när du ställer tiden, klocka när passet är slut'],
   ['haptics',   'Vibration',         'Taktil respons på telefonen'],
-  ['keepAwake', 'Håll skärmen vaken','Under pågående pass'],
+  ['keepAwake', 'Håll skärmen tänd','Under pågående pass. Drar mycket batteri'],
   ['notify',    'Notiser',           'Larm även när appen ligger i bakgrunden'],
 ];
 function toggleOn(k){
