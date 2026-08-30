@@ -1,0 +1,25 @@
+[build]
+  publish = "dist"
+  command = "node build.mjs"
+
+# Service workern måste alltid hämtas färsk, annars fastnar appen i en
+# gammal version hos den som redan installerat den.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json; charset=utf-8"
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
