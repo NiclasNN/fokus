@@ -74,7 +74,7 @@ private struct RunningPill: View {
         Button(action: { Haptics.tap(); onTap() }) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(Area.of(store.s.timer.areaID)?.tint ?? Palette.blue)
+                    .fill(store.activeTint)
                     .frame(width: 7, height: 7)
                     .opacity(store.s.timer.status == .running ? 1 : 0.45)
                 Text(Sv.clock(store.s.timer.remaining))

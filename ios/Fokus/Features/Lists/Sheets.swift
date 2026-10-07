@@ -185,10 +185,10 @@ struct MoveSheet: View {
         todo.projectID = project
         Haptics.press()
         dismiss()
-        if forFocus, let a = area {
+        if forFocus, area != nil {
             let t = todo
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                FocusLauncher.shared.launch(t, area: a, store: store)
+                FocusLauncher.shared.request(t, store: store)
             }
         }
     }

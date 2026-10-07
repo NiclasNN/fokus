@@ -397,13 +397,18 @@ extension Store {
     }
 }
 
-/// Att starta ett pass från en rad kräver ibland en fråga först.
+/// Bryggan mellan listan och ratten.
+///
+/// ▶ i listan KASTAR dig inte till en annan flik — passet startar på plats och
+/// raden byter bock mot ring. Det var det som gjorde att de två halvorna kändes
+/// som två appar. Vill du se ratten trycker du på ringen.
 @MainActor
 final class FocusLauncher: ObservableObject {
     static let shared = FocusLauncher()
     @Published var needsArea: Todo?
     @Published var jumpToFocus = false
 
+    /// Från listan: ladda och starta direkt, utan flikbyte.
     func request(_ t: Todo, store: Store) {
         guard !store.timeLocked else { Haptics.warning(); return }
         guard let area = store.area(for: t)?.id else {
@@ -413,9 +418,18 @@ final class FocusLauncher: ObservableObject {
             needsArea = t
             return
         }
-        launch(t, area: area, store: store)
+        load(t, area: area, store: store)
+        store.startTimer()
     }
-    func launch(_ t: Todo, area: AreaID, store: Store) {
+
+    /// Ladda utan att starta — används från Fokus egen kö.
+    func load(_ t: Todo, store: Store) {
+        guard !store.timeLocked else { Haptics.warning(); return }
+        guard let area = store.area(for: t)?.id else { Haptics.tap(); needsArea = t; return }
+        load(t, area: area, store: store)
+    }
+
+    func load(_ t: Todo, area: AreaID, store: Store) {
         store.s.timer.areaID = area
         store.s.timer.todoID = t.id
         store.s.timer.durationSeconds = t.durationMinutes * 60
@@ -424,6 +438,5 @@ final class FocusLauncher: ObservableObject {
         store.s.timer.startedAt = nil
         store.save()
         Haptics.press()
-        jumpToFocus = true
     }
 }

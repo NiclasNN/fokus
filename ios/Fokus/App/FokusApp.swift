@@ -11,7 +11,7 @@ struct FokusApp: App {
             RootView()
                 .environmentObject(store)
                 .preferredColorScheme(scheme)
-                .tint(Area.of(store.s.timer.areaID)?.tint ?? Palette.blue)
+                .tint(store.activeTint)
         }
         .onChange(of: phase) { _, new in
             switch new {

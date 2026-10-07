@@ -1,130 +1,197 @@
 import SwiftUI
 
+/// Fokus är inte en egen ö. Det är utförandevyn för listan: uppgiften är
+/// ämnet, ratten är instrumentet, och nästa uppgift i Idag står redan på tur.
 struct FocusView: View {
     @EnvironmentObject var store: Store
-    @State private var showPresets = false
+    @ObservedObject private var launcher = FocusLauncher.shared
+    @State private var showPicker = false
 
-    private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
+    private var task: Todo? { store.currentTodo }
+    private var tint: Color { task.map { store.tint(for: $0) } ?? (Area.of(store.s.timer.areaID)?.tint ?? Palette.blue) }
     private let presets = [5, 15, 25, 45, 60, 90]
 
-    /// Dagens plan styr remsan: uppgiften hör till området direkt eller via sitt
-    /// projekt, och "någon gång" ska inte ligga och skräpa på fokusskärmen.
-    private var strip: [Todo] {
-        let today = DayKey.today
-        func rank(_ t: Todo) -> Int {
-            if let d = t.when?.day, d <= today { return 0 }
-            if let d = t.deadline, d <= DayKey.today(offsetBy: 3) { return 1 }
-            return 2
-        }
-        return store.s.todos
-            .filter { !$0.isHeading && !$0.done && $0.when != .someday
-                      && store.area(for: $0)?.id == store.s.timer.areaID }
-            .sorted { rank($0) < rank($1) }
-    }
-
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                // Rummet tar färg av valt livsområde. Föremålen förblir neutrala.
-                tint.opacity(0.07).ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    HStack { corner(.socialt); Spacer(); corner(.struktur) }
-                    Spacer(minLength: 4)
-                    VStack(spacing: 14) {
-                        DialView()
-                            .frame(maxHeight: min(geo.size.height * 0.42, 300))
-                        taskStrip
-                        presetRow
-                        controls
-                    }
-                    Spacer(minLength: 4)
-                    HStack { corner(.pengar); Spacer(); corner(.halsa) }
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    contextLine
+                    DialView().frame(height: 290)
+                    subject
+                    if !store.timeLocked { presetRow }
+                    controls
+                    nextUp
                 }
                 .padding(.horizontal, 16)
+                .padding(.bottom, 24)
             }
-            .animation(.easeInOut(duration: 0.5), value: store.s.timer.areaID)
-        }
-        .navigationBarHidden(true)
-    }
-
-    // MARK: - Hörnen
-
-    private func corner(_ id: AreaID) -> some View {
-        let a = Area.of(id)!
-        let on = store.s.timer.areaID == id
-        let hasOpen = store.areaBadge(id) > 0
-        return Button {
-            guard !store.timeLocked else { Haptics.warning(); return }
-            Haptics.press()
-            store.s.timer.areaID = id
-            store.s.timer.todoID = nil
-            store.save()
-        } label: {
-            VStack(spacing: 5) {
-                Image(systemName: a.symbol).font(.system(size: 21, weight: .semibold))
-                Text(a.short).font(.system(size: 10.5, weight: .bold)).lineLimit(1)
-            }
-            .foregroundStyle(.white)
-            .frame(width: 78, height: 78)
             .background(
-                LinearGradient(colors: [a.tint.opacity(0.92), a.tint],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 23, style: .continuous)
-            )
-            .overlay(alignment: .topTrailing) {
-                if hasOpen {
-                    Circle().fill(.white).frame(width: 6, height: 6).padding(9)
+                // samma neutrala yta som Listor; området är accent, inte kuliss
+                ZStack {
+                    Palette.bg
+                    tint.opacity(0.05)
                 }
-            }
-            .shadow(color: a.tint.opacity(on ? 0.45 : 0.22), radius: on ? 14 : 8, y: 5)
-            .scaleEffect(on ? 1.06 : 0.94)
-            .opacity(store.timeLocked && !on ? 0.4 : on ? 1 : 0.8)
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: on)
-    }
-
-    // MARK: - Uppgiftsremsan
-
-    private var taskStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                if strip.isEmpty {
-                    Text("Inga uppgifter i \(Area.of(store.s.timer.areaID)?.short ?? "")")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Palette.third)
-                        .padding(.horizontal, 6)
-                } else {
-                    ForEach(strip) { t in
-                        let on = store.s.timer.todoID == t.id
-                        Button {
-                            guard !store.timeLocked else { Haptics.warning(); return }
-                            Haptics.tap()
-                            if on { store.s.timer.todoID = nil }
-                            else {
-                                store.s.timer.todoID = t.id
-                                store.s.timer.durationSeconds = t.durationMinutes * 60
-                            }
-                            store.save()
-                        } label: {
-                            Text(t.title.isEmpty ? "Namnlös" : t.title)
-                                .font(.system(size: 14.5, weight: .medium))
-                                .lineLimit(1)
-                                .foregroundStyle(on ? .white : Palette.label)
-                                .padding(.horizontal, 15).padding(.vertical, 10)
-                                .background(on ? AnyShapeStyle(tint) : AnyShapeStyle(Palette.card),
-                                            in: Capsule())
-                                .overlay(Capsule().stroke(Palette.hair, lineWidth: on ? 0 : 0.5))
-                        }
-                        .buttonStyle(.plain)
+                .ignoresSafeArea()
+            )
+            .navigationTitle("Fokus")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if store.streak > 0 {
+                        Label("\(store.streak)", systemImage: "flame.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Palette.today)
                     }
                 }
             }
-            .padding(.horizontal, 2)
+            .animation(.easeInOut(duration: 0.35), value: store.s.timer.todoID)
+            .sheet(isPresented: $showPicker) {
+                TodayPickerSheet().environmentObject(store)
+            }
         }
-        .frame(height: 42)
-        .opacity(store.timeLocked ? 0.45 : 1)
+    }
+
+    // MARK: - Vad du utför
+
+    private var contextLine: some View {
+        HStack(spacing: 7) {
+            if task != nil {
+                Image(systemName: "star.fill").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Palette.today)
+                Text("IDAG").font(.system(size: 11, weight: .bold)).kerning(1.4)
+                Text("·").foregroundStyle(Palette.third)
+                Text("\(store.todayRemaining) kvar").font(.system(size: 12, weight: .medium))
+            } else {
+                Image(systemName: "timer").font(.system(size: 11, weight: .bold))
+                Text("FRITT PASS").font(.system(size: 11, weight: .bold)).kerning(1.4)
+            }
+            Spacer()
+        }
+        .foregroundStyle(Palette.second)
+    }
+
+    // MARK: - Ämnet: uppgiften, med sin checklista levande
+
+    @ViewBuilder private var subject: some View {
+        if let t = task {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 11) {
+                    Button {
+                        Sound.shared.check(); Haptics.success()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                            store.setDone(t.id, true)
+                            store.s.timer.todoID = nil
+                        }
+                    } label: { CheckCircle(done: false, tint: tint, size: 24) }
+                    .buttonStyle(.plain)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(t.title.isEmpty ? "Namnlös" : t.title)
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(Palette.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 9) {
+                            if let p = store.project(t.projectID) {
+                                chip("chevron.right", p.title, tint)
+                            } else if let a = Area.of(t.areaID) {
+                                chip(a.symbol, a.short, a.tint)
+                            }
+                            if let d = t.deadline {
+                                chip("flag.fill", Sv.deadline(d),
+                                     d.daysFromToday > 2 ? Palette.second : Palette.deadline)
+                            }
+                            if t.focusedSeconds > 0 {
+                                chip("clock", Sv.short(seconds: t.focusedSeconds), tint)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Button { Haptics.tap(); store.s.timer.todoID = nil; store.save() } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Palette.third).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.timeLocked)
+                    .opacity(store.timeLocked ? 0 : 1)
+                }
+
+                // Stegen går att bocka av MEDAN passet löper — det är därför
+                // uppgiften ligger här och inte bara som en rubrik.
+                if !t.checklist.isEmpty {
+                    Divider().padding(.vertical, 11)
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(store.binding(for: t.id).checklist) { $item in
+                            HStack(spacing: 9) {
+                                Button {
+                                    Haptics.tap()
+                                    if !item.done { Sound.shared.check() }
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        item.done.toggle()
+                                    }
+                                } label: { CheckCircle(done: item.done, tint: tint, size: 18) }
+                                .buttonStyle(.plain)
+                                Text(item.title.isEmpty ? "Steg" : item.title)
+                                    .font(.system(size: 14.5))
+                                    .foregroundStyle(item.done ? Palette.third : Palette.second)
+                                    .strikethrough(item.done, color: Palette.third)
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(15)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .sheetCard()
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        } else {
+            VStack(spacing: 13) {
+                Button { Haptics.tap(); showPicker = true } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "star.fill").font(.system(size: 13, weight: .bold))
+                        Text("Välj något från Idag").font(.system(size: 15.5, weight: .medium))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Palette.third)
+                    }
+                    .foregroundStyle(Palette.label)
+                    .padding(15)
+                    .frame(maxWidth: .infinity)
+                    .sheetCard()
+                }
+                .buttonStyle(PressScale())
+
+                // Utan uppgift måste området väljas för hand — tiden ska ändå
+                // bokföras någonstans.
+                HStack(spacing: 7) {
+                    ForEach(Area.all) { a in
+                        let on = store.s.timer.areaID == a.id
+                        Button {
+                            guard !store.timeLocked else { Haptics.warning(); return }
+                            Haptics.tap(); store.s.timer.areaID = a.id; store.save()
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: a.symbol).font(.system(size: 14, weight: .semibold))
+                                Text(a.short).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                            }
+                            .foregroundStyle(on ? .white : a.tint)
+                            .frame(maxWidth: .infinity).padding(.vertical, 9)
+                            .background(on ? AnyShapeStyle(a.tint) : AnyShapeStyle(a.tint.opacity(0.12)),
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(PressScale())
+                    }
+                }
+            }
+        }
+    }
+
+    private func chip(_ symbol: String, _ text: String, _ color: Color) -> some View {
+        HStack(spacing: 3.5) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .semibold))
+            Text(text).lineLimit(1)
+        }
+        .font(Typo.meta).foregroundStyle(color)
     }
 
     // MARK: - Förval
@@ -135,12 +202,13 @@ struct FocusView: View {
                 ForEach(presets, id: \.self) { m in
                     let on = Int((Double(store.s.timer.durationSeconds) / 60).rounded()) == m
                     Button {
-                        guard !store.timeLocked else { Haptics.warning(); return }
                         Haptics.tap()
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
                             store.s.timer.durationSeconds = m * 60
                         }
                         store.s.settings.lastDurationMinutes = m
+                        // uppgiften bär sin egen längd — ändrar du här, ändras den
+                        if var t = task { t.durationMinutes = m; store.update(t) }
                         store.save()
                     } label: {
                         Text(m < 60 ? "\(m) min" : "\(m / 60) h")
@@ -154,18 +222,17 @@ struct FocusView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 2)
+            .padding(.horizontal, 1)
         }
         .frame(height: 36)
-        .opacity(store.timeLocked ? 0.45 : 1)
     }
 
     // MARK: - Knapparna
 
     private var controls: some View {
         HStack(spacing: 16) {
-            ghost("arrow.counterclockwise", disabled: store.s.timer.status == .idle
-                                                      && store.s.timer.elapsedBefore == 0) {
+            ghost("arrow.counterclockwise",
+                  disabled: store.s.timer.status == .idle && store.s.timer.elapsedBefore == 0) {
                 store.resetTimer()
             }
             Button {
@@ -185,7 +252,7 @@ struct FocusView: View {
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
                     in: Capsule()
                 )
-                .shadow(color: tint.opacity(0.4), radius: 14, y: 6)
+                .shadow(color: tint.opacity(0.35), radius: 14, y: 6)
             }
             .buttonStyle(PressScale())
             ghost("checkmark", disabled: !store.s.timer.isLive) { store.finishEarly() }
@@ -204,6 +271,77 @@ struct FocusView: View {
         .buttonStyle(PressScale())
         .disabled(disabled)
         .opacity(disabled ? 0.35 : 1)
+    }
+
+    // MARK: - Kön
+
+    @ViewBuilder private var nextUp: some View {
+        if let next = store.nextInToday(after: task?.id), next.id != task?.id {
+            Button {
+                guard !store.timeLocked else { Haptics.warning(); return }
+                FocusLauncher.shared.load(next, store: store)
+            } label: {
+                HStack(spacing: 10) {
+                    Text("NÄSTA").font(.system(size: 10.5, weight: .bold)).kerning(1.2)
+                        .foregroundStyle(Palette.third)
+                    Text(next.title.isEmpty ? "Namnlös" : next.title)
+                        .font(.system(size: 14.5)).foregroundStyle(Palette.label).lineLimit(1)
+                    Spacer()
+                    Text("\(next.durationMinutes) min")
+                        .font(Typo.meta).foregroundStyle(store.tint(for: next))
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Palette.third)
+                }
+                .padding(.horizontal, 15).padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .sheetCard()
+            }
+            .buttonStyle(PressScale())
+            .opacity(store.timeLocked ? 0.4 : 1)
+        }
+    }
+}
+
+/// Välj bland dagens uppgifter utan att lämna Fokus.
+struct TodayPickerSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                let items = store.items(in: .today).filter { !$0.done }
+                if items.isEmpty {
+                    Text("Inget planerat idag. Lägg till något under Listor → Idag.")
+                        .font(.system(size: 14)).foregroundStyle(Palette.second)
+                } else {
+                    ForEach(items) { t in
+                        Button {
+                            FocusLauncher.shared.load(t, store: store)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 11) {
+                                Circle().fill(store.tint(for: t)).frame(width: 9, height: 9)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.title.isEmpty ? "Namnlös" : t.title)
+                                        .font(Typo.row).foregroundStyle(Palette.label)
+                                    if let a = store.area(for: t) {
+                                        Text(a.short).font(Typo.meta).foregroundStyle(Palette.third)
+                                    }
+                                }
+                                Spacer()
+                                Text("\(t.durationMinutes) min")
+                                    .font(Typo.meta).foregroundStyle(Palette.third)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("Idag")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Avbryt") { dismiss() } } }
+        }
     }
 }
 

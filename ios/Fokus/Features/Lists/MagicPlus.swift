@@ -23,7 +23,7 @@ struct MagicPlus: View {
         var day: DayKey?
     }
 
-    private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
+    private var tint: Color { store.activeTint }
     private var inProject: Bool { if case .project = route { return true }; return false }
 
     var body: some View {

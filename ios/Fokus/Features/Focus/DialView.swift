@@ -22,7 +22,7 @@ struct DialView: View {
     private let elastic = 0.55
 
     private var live: Bool { store.s.timer.isLive }
-    private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
+    private var tint: Color { store.activeTint }
 
     private var laps: Int { max(0, (current - 1) / 60) }
     private var arcMinutes: Int { current - laps * 60 }          // alltid 1–60
@@ -187,10 +187,13 @@ struct DialView: View {
         .allowsHitTesting(false)
     }
 
+    /// Kortet under ratten äger uppgiftens namn. Ratten säger bara hur det går.
     private var subtitle: String {
-        if store.s.timer.status == .paused { return "Pausad" }
-        if let t = store.currentTodo, !t.title.isEmpty { return t.title }
-        return store.s.timer.status == .running ? store.sessionTitle : "Redo att starta"
+        switch store.s.timer.status {
+        case .paused:  return "Pausad"
+        case .running: return "Pågår"
+        case .idle:    return store.currentTodo == nil ? "Välj en uppgift" : "Redo att starta"
+        }
     }
 
     // MARK: - Gesten

@@ -59,6 +59,12 @@ final class Store: ObservableObject {
         if let p = project(t.projectID), let a = Area.of(p.areaID) { return a.tint }
         return Palette.inbox
     }
+    /// Accenten för hela appen just nu: uppgiftens färg om ett pass har en,
+    /// annars det valda områdets.
+    var activeTint: Color {
+        if let t = currentTodo { return tint(for: t) }
+        return Area.of(s.timer.areaID)?.tint ?? Palette.blue
+    }
     func area(for t: Todo) -> Area? {
         Area.of(t.areaID) ?? Area.of(project(t.projectID)?.areaID)
     }
@@ -183,6 +189,15 @@ final class Store: ObservableObject {
     func focusedSeconds(inArea id: AreaID) -> Int {
         s.todos.filter { area(for: $0)?.id == id }.reduce(0) { $0 + $1.focusedSeconds }
     }
+    /// Kön. Fokus utför Idag-listan, så nästa uppgift är alltid känd —
+    /// det är den som gör de två halvorna till en loop i stället för två öar.
+    func nextInToday(after id: String?) -> Todo? {
+        let open = items(in: .today).filter { !$0.done }
+        guard let id, let i = open.firstIndex(where: { $0.id == id }) else { return open.first }
+        return open.indices.contains(i + 1) ? open[i + 1] : open.first { $0.id != id }
+    }
+    var todayRemaining: Int { items(in: .today).filter { !$0.done }.count }
+
     /// Dagens plan: hur mycket tid uppgifterna i Idag är tänkta att ta,
     /// och hur mycket som redan är gjort.
     func todayPlan() -> (planned: Int, done: Int) {
