@@ -321,7 +321,7 @@ struct BulkWhenSheet: View {
                         .onChange(of: date) { _, d in set(.on(DayKey(d)), false) }
                 }
             }
-            .navigationTitle("\(ui.selection.count) uppgifter")
+            .navigationTitle("\(ui.selection.count) \(ui.selection.count == 1 ? "uppgift" : "uppgifter")")
             .navigationBarTitleDisplayMode(.inline)
         }
     }

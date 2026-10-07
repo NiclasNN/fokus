@@ -235,7 +235,7 @@ struct SelectionBar: View {
         .overlay(alignment: .top) { Hairline() }
         .overlay(alignment: .topTrailing) {
             Button { Haptics.tap(); ui.clearSelection() } label: {
-                Text("\(ui.selection.count) markerade · Avbryt")
+                Text("\(ui.selection.count) \(ui.selection.count == 1 ? "markerad" : "markerade") · Avbryt")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(Palette.third)
             }
