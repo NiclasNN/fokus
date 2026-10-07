@@ -7,27 +7,14 @@ struct FocusView: View {
     private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
     private let presets = [5, 15, 25, 45, 60, 90]
 
-    /// Remsan ÄR din Idag-lista för det här området. Fokus utför planen du
-    /// gjorde i Things-delen — den hittar inte på en egen ordning.
-    /// Finns inget planerat idag visas det som går att ta tag i ändå.
+    /// Allt du kan ta tag i i området — det du planerat för idag först.
+    ///
+    /// Dagens plan styr ORDNINGEN, inte vad som syns. Allt annat var en
+    /// bugg: skrev du något nytt i Socialt och det råkade finnas en
+    /// dagsplanerad uppgift där, försvann det du just skrivit.
     private var strip: [Todo] {
-        let today = DayKey.today
-        let inArea = store.s.todos.filter {
-            !$0.isHeading && !$0.done && store.area(for: $0)?.id == store.s.timer.areaID
-        }
-        let planned = inArea.filter { t in
-            (t.when?.day.map { $0 <= today } ?? false) || (t.deadline.map { $0 <= today } ?? false)
-        }
-        if !planned.isEmpty { return planned }
-        return inArea.filter {
-            $0.when != .someday && !($0.when?.day.map { $0 > today } ?? false)
-        }
-    }
-    private var stripIsToday: Bool {
-        let today = DayKey.today
-        return strip.contains { t in
-            (t.when?.day.map { $0 <= today } ?? false) || (t.deadline.map { $0 <= today } ?? false)
-        }
+        store.actionable(in: store.s.timer.areaID)
+            .sorted { store.isToday($0) && !store.isToday($1) }
     }
 
     var body: some View {
@@ -61,8 +48,9 @@ struct FocusView: View {
     private func corner(_ id: AreaID) -> some View {
         let a = Area.of(id)!
         let on = store.s.timer.areaID == id
-        let hasOpen = store.areaBadge(id) > 0
-        let todayCount = store.todayCount(in: id)
+        // Siffran säger "du har saker att göra här" — samma tal som
+        // områdets rad i Listor visar.
+        let waiting = store.areaBadge(id)
         return Button {
             guard !store.timeLocked else { Haptics.warning(); return }
             Haptics.press()
@@ -84,15 +72,13 @@ struct FocusView: View {
             .overlay(alignment: .topTrailing) {
                 // Samma plats som pricken alltid haft, men den säger nu hur
                 // många uppgifter som faktiskt väntar idag i området.
-                if todayCount > 0 {
-                    Text("\(todayCount)")
+                if waiting > 0 {
+                    Text("\(waiting)")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(a.tint)
                         .frame(minWidth: 15, minHeight: 15)
                         .background(.white, in: Capsule())
                         .padding(7)
-                } else if hasOpen {
-                    Circle().fill(.white).frame(width: 6, height: 6).padding(9)
                 }
             }
             .shadow(color: a.tint.opacity(on ? 0.45 : 0.22), radius: on ? 14 : 8, y: 5)
@@ -109,7 +95,7 @@ struct FocusView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
                 if strip.isEmpty {
-                    Text("Inget planerat i \(Area.of(store.s.timer.areaID)?.short ?? "") — lägg till under Listor")
+                    Text("Inget att göra i \(Area.of(store.s.timer.areaID)?.short ?? "") — lägg till under Listor")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.third)
                         .padding(.horizontal, 6)
@@ -126,11 +112,17 @@ struct FocusView: View {
                             }
                             store.save()
                         } label: {
-                            HStack(spacing: 9) {
+                            HStack(spacing: 7) {
+                                if store.isToday(t) {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(on ? .white.opacity(0.85) : Palette.today)
+                                }
                                 Text(t.title.isEmpty ? "Namnlös" : t.title)
                                     .font(.system(size: 14.5, weight: .medium))
                                     .lineLimit(1)
                                     .foregroundStyle(on ? .white : Palette.label)
+                                    .padding(.trailing, on ? 2 : 0)
                                 // Den valda uppgiften går att bocka av här —
                                 // samma uppgift, samma bock, som i listan.
                                 if on {

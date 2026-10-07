@@ -42,20 +42,22 @@ struct MagicPlus: View {
                 .transition(.opacity)
             }
 
-            Button {} label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .background(
-                        LinearGradient(colors: [tint.opacity(0.88), tint],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                        in: Circle()
-                    )
-                    .shadow(color: tint.opacity(0.45), radius: lifted ? 20 : 12, y: 6)
-            }
-            .buttonStyle(.plain)
-            .scaleEffect(lifted ? 1.07 : 1)
+            // INGEN Button här. En Button runt gesten åt upp trycket: dess
+            // egen tap-gest vann över DragGesture, så ett vanligt tryck på
+            // plusset skapade ingenting. Gesten äger hela knappen i stället —
+            // den hanterar både tryck (ingen rörelse) och drag.
+            Image(systemName: "plus")
+                .font(.system(size: 25, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(
+                    LinearGradient(colors: [tint.opacity(0.88), tint],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: Circle()
+                )
+                .shadow(color: tint.opacity(0.45), radius: lifted ? 20 : 12, y: 6)
+                .contentShape(Circle())
+                .scaleEffect(lifted ? 1.07 : 1)
             .offset(drag)
             .overlay(alignment: .trailing) {
                 if lifted, let t = target {
@@ -98,6 +100,7 @@ struct MagicPlus: View {
                 drag = .zero
                 target = nil
                 if !wasLifted {
+                    Haptics.press()
                     onCreate(nil, false, nil)          // ett tryck: sist i listan
                 } else {
                     onCreate(t.map { globalIndex($0.localIndex) }, t?.heading ?? false, t?.day)

@@ -94,20 +94,30 @@ final class Store: ObservableObject {
         s.todos.filter { !$0.isHeading && $0.areaID == area && $0.projectID == nil
                          && !$0.done && $0.when == .someday }
     }
-    /// Hur många av områdets uppgifter som står på dagens plan — det är
-    /// den siffran hörnplattan visar, så Fokus och Idag säger samma sak.
-    func todayCount(in area: AreaID) -> Int {
+    /// Allt som går att ta tag i i ett livsområde: inte klart, inte parkerat
+    /// under "någon gång", och inte daterat i framtiden. Uppgiften hör till
+    /// området antingen direkt eller via sitt projekt.
+    ///
+    /// EN definition, som både Fokus remsa, Fokus hörnplatta och områdets rad
+    /// i Listor läser. Tidigare hade de tre olika — därför kunde något du
+    /// skrev i Socialt synas på ena stället men inte på det andra.
+    func actionable(in area: AreaID) -> [Todo] {
         let today = DayKey.today
         return s.todos.filter {
-            !$0.isHeading && !$0.done && self.area(for: $0)?.id == area
-                && (($0.when?.day.map { $0 <= today } ?? false)
-                    || ($0.deadline.map { $0 <= today } ?? false))
-        }.count
+            !$0.isHeading && !$0.done
+                && self.area(for: $0)?.id == area
+                && $0.when != .someday
+                && !($0.when?.day.map { $0 > today } ?? false)
+        }
     }
-    func areaBadge(_ area: AreaID) -> Int {
-        s.todos.filter { !$0.isHeading && $0.areaID == area && !$0.done && $0.when != .someday }.count
-            + projects(in: area).count
+    /// Står den på dagens plan? Styr ordningen i remsan — inte om den syns.
+    func isToday(_ t: Todo) -> Bool {
+        let today = DayKey.today
+        return (t.when?.day.map { $0 <= today } ?? false)
+            || (t.deadline.map { $0 <= today } ?? false)
     }
+    func todayCount(in area: AreaID) -> Int { actionable(in: area).filter(isToday).count }
+    func areaBadge(_ area: AreaID) -> Int { actionable(in: area).count }
 
     /// Rubriker och uppgifter i arrayordning — ordningen ÄR sorteringen.
     func rows(inProject id: String) -> [Todo] {
