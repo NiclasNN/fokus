@@ -4,14 +4,14 @@ import SwiftUI
 /// undanstoppade som piller tills man behöver dem — Things princip.
 struct TodoCardView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var ui: ListUI
     @Binding var todo: Todo
-    @Binding var openID: String?
 
     @State private var sheet: Sheet?
     @FocusState private var focusedCheck: String?
 
     enum Sheet: Identifiable {
-        case when, deadline, tags, move, duration
+        case when, deadline, tags, move, duration, repeating
         var id: String { String(describing: self) }
     }
 
@@ -48,6 +48,7 @@ struct TodoCardView: View {
                 case .tags:     TagSheet(tags: $todo.tags)
                 case .move:     MoveSheet(todo: $todo, forFocus: false)
                 case .duration: DurationSheet(minutes: $todo.durationMinutes)
+                case .repeating: RepeatSheet(rule: $todo.repeatRule)
                 }
             }
             .presentationDetents([.medium, .large])
@@ -111,9 +112,11 @@ struct TodoCardView: View {
             pill(todo.tags.isEmpty ? "Taggar" : todo.tags.joined(separator: ", "), "tag",
                  set: !todo.tags.isEmpty) { sheet = .tags }
             pill(whereLabel, "square.stack.3d.up", set: todo.isFiled) { sheet = .move }
-            pill("\(todo.durationMinutes) min per pass", "clock", set: false) { sheet = .duration }
+            pill(todo.repeatRule?.label ?? "Upprepa", "repeat",
+                 set: todo.repeatRule != nil) { sheet = .repeating }
+            pill(focusLabel, "clock", set: todo.focusedSeconds > 0) { sheet = .duration }
             pill(nil, "trash", set: false, color: Palette.deadline, plain: true) {
-                openID = nil
+                ui.openID = nil
                 store.delete(todo.id)
                 Haptics.warning()
             }
@@ -126,6 +129,13 @@ struct TodoCardView: View {
         case .on(let k):    return todo.evening && k == DayKey.today ? "I kväll" : Sv.day(k)
         case .none:         return "När"
         }
+    }
+    /// Appens två halvor i en rad text: planerad längd, och vad den
+    /// faktiskt har kostat hittills.
+    private var focusLabel: String {
+        guard todo.focusedSeconds > 0 else { return "\(todo.durationMinutes) min per pass" }
+        let pass = todo.sessionCount == 1 ? "pass" : "pass"
+        return "\(Sv.short(seconds: todo.focusedSeconds)) · \(todo.sessionCount) \(pass)"
     }
     private var whereLabel: String {
         if let p = store.project(todo.projectID) { return p.title }

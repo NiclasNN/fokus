@@ -141,7 +141,55 @@ final class Store: ObservableObject {
         s.todos[i].done = done
         s.todos[i].completedAt = done ? Date() : nil
         if done, s.timer.todoID == id { s.timer.todoID = nil }
+        // En upprepande uppgift föds på nytt i stället för att försvinna.
+        // Nästa datum räknas från den dag den VAR planerad, inte från idag —
+        // annars glider ett veckoåtagande en dag för varje gång man är sen.
+        if done, let rule = s.todos[i].repeatRule {
+            var nextOne = s.todos[i]
+            nextOne.id = UUID().uuidString
+            nextOne.done = false
+            nextOne.completedAt = nil
+            nextOne.createdAt = Date()
+            nextOne.focusedSeconds = 0
+            nextOne.sessionCount = 0
+            nextOne.checklist = nextOne.checklist.map { var c = $0; c.done = false; return c }
+            let base = s.todos[i].when?.day ?? DayKey.today
+            nextOne.when = .on(rule.next(after: base))
+            if let dl = s.todos[i].deadline {
+                let shift = Calendar.current.dateComponents([.day], from: base.date, to: dl.date).day ?? 0
+                nextOne.deadline = DayKey(Calendar.current.date(byAdding: .day, value: shift,
+                                                                to: nextOne.when!.day!.date) ?? dl.date)
+            }
+            s.todos.insert(nextOne, at: i)
+        }
         save()
+    }
+
+    /// Flytta en uppgift i arrayen — ordningen i den ÄR sorteringen.
+    func move(_ id: String, before other: String?) {
+        guard let from = index(of: id) else { return }
+        let item = s.todos.remove(at: from)
+        if let other, let to = index(of: other) {
+            s.todos.insert(item, at: to)
+        } else {
+            s.todos.append(item)
+        }
+        save()
+    }
+
+    func focusedSeconds(inProject id: String) -> Int {
+        s.todos.filter { $0.projectID == id }.reduce(0) { $0 + $1.focusedSeconds }
+    }
+    func focusedSeconds(inArea id: AreaID) -> Int {
+        s.todos.filter { area(for: $0)?.id == id }.reduce(0) { $0 + $1.focusedSeconds }
+    }
+    /// Dagens plan: hur mycket tid uppgifterna i Idag är tänkta att ta,
+    /// och hur mycket som redan är gjort.
+    func todayPlan() -> (planned: Int, done: Int) {
+        let items = items(in: .today)
+        let planned = items.reduce(0) { $0 + $1.durationMinutes * 60 }
+        let done = seconds(on: DayKey.today)
+        return (planned, done)
     }
 
     func addProject(_ title: String, in area: AreaID?) -> Project {
@@ -202,8 +250,15 @@ final class Store: ObservableObject {
         resetTimer()
         Haptics.success()
     }
+    /// Sätts när ett pass tar slut med en uppgift kopplad — vyn frågar då
+    /// om uppgiften ska bockas av. Timern gör det inte själv: ett pass är
+    /// inte samma sak som att vara klar.
+    @Published var finishedTodoID: String?
+
     func completeTimer(at date: Date = Date()) {
+        let todoID = s.timer.todoID
         log(seconds: s.timer.durationSeconds, at: date)
+        if let id = todoID, let t = todo(id), !t.done { finishedTodoID = id }
         s.timer.status = .idle
         s.timer.elapsedBefore = 0
         s.timer.startedAt = nil

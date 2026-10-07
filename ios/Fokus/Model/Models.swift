@@ -107,6 +107,44 @@ struct ChecklistItem: Identifiable, Hashable, Codable {
     var done: Bool = false
 }
 
+/// En uppgift som kommer tillbaka. Things kallar det repeating to-do:
+/// när du bockar av den föds nästa på nästa datum.
+enum RepeatRule: String, Codable, CaseIterable, Identifiable {
+    case daily, weekdays, weekly, biweekly, monthly, yearly
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .daily:    return "Varje dag"
+        case .weekdays: return "Varje vardag"
+        case .weekly:   return "Varje vecka"
+        case .biweekly: return "Varannan vecka"
+        case .monthly:  return "Varje månad"
+        case .yearly:   return "Varje år"
+        }
+    }
+    /// Nästa dag efter `from`. Vardagsregeln hoppar över helgen.
+    func next(after from: DayKey) -> DayKey {
+        let cal = Calendar.current
+        let d = from.date
+        func add(_ comp: Calendar.Component, _ n: Int) -> DayKey {
+            DayKey(cal.date(byAdding: comp, value: n, to: d) ?? d)
+        }
+        switch self {
+        case .daily:    return add(.day, 1)
+        case .weekdays:
+            var k = add(.day, 1)
+            while [1, 7].contains(cal.component(.weekday, from: k.date)) {
+                k = DayKey(cal.date(byAdding: .day, value: 1, to: k.date) ?? k.date)
+            }
+            return k
+        case .weekly:   return add(.day, 7)
+        case .biweekly: return add(.day, 14)
+        case .monthly:  return add(.month, 1)
+        case .yearly:   return add(.year, 1)
+        }
+    }
+}
+
 struct Todo: Identifiable, Hashable, Codable {
     enum Kind: String, Codable { case todo, heading }
 
@@ -127,6 +165,7 @@ struct Todo: Identifiable, Hashable, Codable {
     var createdAt: Date = Date()
     var focusedSeconds: Int = 0
     var sessionCount: Int = 0
+    var repeatRule: RepeatRule?
 
     var isHeading: Bool { kind == .heading }
     /// Sorterad någonstans? Inkorgen är precis det som inte är det.
@@ -225,6 +264,7 @@ extension Todo {
         createdAt       = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         focusedSeconds  = try c.decodeIfPresent(Int.self, forKey: .focusedSeconds) ?? 0
         sessionCount    = try c.decodeIfPresent(Int.self, forKey: .sessionCount) ?? 0
+        repeatRule      = try c.decodeIfPresent(RepeatRule.self, forKey: .repeatRule)
     }
 }
 

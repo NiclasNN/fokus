@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var launcher = FocusLauncher.shared
     @State private var tab = Tab.lists
 
     enum Tab: Hashable { case focus, lists, stats, more }
@@ -22,14 +23,45 @@ struct RootView: View {
                 .tag(Tab.more)
         }
         .onChange(of: tab) { _, _ in Haptics.tap() }
+        // ▶ på en rad laddar uppgiften i ratten — och tar dig dit.
+        .onChange(of: launcher.jumpToFocus) { _, go in
+            guard go else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { tab = .focus }
+            launcher.jumpToFocus = false
+        }
+        // Ett avslutat pass är inte samma sak som en avbockad uppgift.
+        // Appen frågar i stället för att anta.
+        .alert("Passet är klart", isPresented: finishedBinding) {
+            Button("Bocka av") {
+                if let id = store.finishedTodoID {
+                    Sound.shared.check(); Haptics.success()
+                    withAnimation { store.setDone(id, true) }
+                }
+                store.finishedTodoID = nil
+            }
+            Button("Inte klar än", role: .cancel) { store.finishedTodoID = nil }
+        } message: {
+            Text("\(store.todo(store.finishedTodoID)?.title ?? "Uppgiften") — vill du bocka av den?")
+        }
         // Ett pågående pass följer med till alla flikar.
         .safeAreaInset(edge: .top) {
             if store.s.timer.isLive && tab != .focus {
+                // Egen ogenomskinlig yta: annars lyser navigationsfältets
+                // eget underlag igenom runt pillret.
                 RunningPill { tab = .focus }
+                    .frame(maxWidth: .infinity)
+                    .background(Palette.bg)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.s.timer.isLive)
+    }
+}
+
+extension RootView {
+    var finishedBinding: Binding<Bool> {
+        Binding(get: { store.finishedTodoID != nil },
+                set: { if !$0 { store.finishedTodoID = nil } })
     }
 }
 

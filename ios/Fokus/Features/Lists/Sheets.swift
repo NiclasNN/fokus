@@ -1,6 +1,6 @@
 import SwiftUI
 
-private struct PickRow: View {
+struct PickRow: View {
     let symbol: String, title: String
     var color: Color = Palette.blue
     var on: Bool = false
@@ -265,5 +265,106 @@ struct NewProjectSheet: View {
         Haptics.success()
         dismiss()
         onCreate(p)
+    }
+}
+
+// MARK: - Upprepning
+
+struct RepeatSheet: View {
+    @Binding var rule: RepeatRule?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("När du bockar av en upprepande uppgift föds nästa på nästa datum. Räknat från den dag den var planerad — inte från idag, så ett veckoåtagande glider inte en dag varje gång du är sen.")
+                        .font(.system(size: 13.5)).foregroundStyle(Palette.second)
+                }
+                Section {
+                    PickRow(symbol: "xmark", title: "Upprepas inte", color: Palette.anytime,
+                            on: rule == nil) { set(nil) }
+                    ForEach(RepeatRule.allCases) { r in
+                        PickRow(symbol: "repeat", title: r.label, color: Palette.blue,
+                                on: rule == r) { set(r) }
+                    }
+                }
+            }
+            .navigationTitle("Upprepa")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    private func set(_ r: RepeatRule?) { rule = r; Haptics.press(); dismiss() }
+}
+
+// MARK: - Flera på en gång
+
+struct BulkWhenSheet: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var ui: ListUI
+    @Environment(\.dismiss) private var dismiss
+    @State private var date = Date()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    PickRow(symbol: "star.fill", title: "Idag", color: Palette.today) { set(.on(DayKey.today), false) }
+                    PickRow(symbol: "moon.fill", title: "I kväll", color: Palette.evening) { set(.on(DayKey.today), true) }
+                    PickRow(symbol: "calendar", title: "I morgon", color: Palette.upcoming) { set(.on(DayKey.today(offsetBy: 1)), false) }
+                    PickRow(symbol: "archivebox.fill", title: "Någon gång", color: Palette.someday) { set(.someday, false) }
+                    PickRow(symbol: "square.stack.3d.up.fill", title: "När som helst", color: Palette.anytime) { set(nil, false) }
+                }
+                Section("Eller en bestämd dag") {
+                    DatePicker("Dag", selection: $date, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .onChange(of: date) { _, d in set(.on(DayKey(d)), false) }
+                }
+            }
+            .navigationTitle("\(ui.selection.count) uppgifter")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    private func set(_ w: When?, _ eve: Bool) {
+        for id in ui.selection {
+            guard var t = store.todo(id) else { continue }
+            t.when = w; t.evening = eve
+            store.update(t)
+        }
+        Haptics.press(); ui.clearSelection(); dismiss()
+    }
+}
+
+struct BulkMoveSheet: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var ui: ListUI
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    PickRow(symbol: "tray", title: "Inkorgen", color: Palette.inbox) { place(nil, nil) }
+                    ForEach(Area.all) { a in
+                        PickRow(symbol: a.symbol, title: a.name, color: a.tint) { place(a.id, nil) }
+                        ForEach(store.projects(in: a.id)) { p in
+                            PickRow(symbol: "chevron.right", title: p.title, color: a.tint, indent: 22) {
+                                place(a.id, p.id)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Flytta \(ui.selection.count)")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    private func place(_ area: AreaID?, _ project: String?) {
+        for id in ui.selection {
+            guard var t = store.todo(id) else { continue }
+            t.areaID = area; t.projectID = project
+            store.update(t)
+        }
+        Haptics.press(); ui.clearSelection(); dismiss()
     }
 }

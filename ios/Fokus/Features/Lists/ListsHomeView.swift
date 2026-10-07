@@ -21,15 +21,15 @@ struct GroupFrames: PreferenceKey {
 
 struct ListsHomeView: View {
     @EnvironmentObject var store: Store
-    @StateObject private var launcher = FocusLauncher.shared
+    @StateObject private var ui = ListUI()
+    @ObservedObject private var launcher = FocusLauncher.shared
 
     @State private var path: [Route] = []
-    @State private var openID: String?
     @State private var query = ""
     @State private var frames: [String: CGRect] = [:]
     @State private var order: [String] = []
     @State private var groups: [String: CGRect] = [:]
-    @State private var newProjectArea: AreaID??
+    @State private var newProjectFor: AreaBox?
 
     private var route: Route? { path.last }
 
@@ -38,89 +38,107 @@ struct ListsHomeView: View {
             home
                 .navigationDestination(for: Route.self) { r in
                     switch r {
-                    case .list(let l):   SmartListView(list: l, openID: $openID)
-                    case .area(let a):   AreaView(area: a, openID: $openID)
-                    case .project(let p): ProjectDetailView(projectID: p, openID: $openID)
+                    case .list(let l):    SmartListView(list: l)
+                    case .area(let a):    AreaView(area: a)
+                    case .project(let p): ProjectDetailView(projectID: p)
                     }
                 }
         }
+        .environmentObject(ui)
         .onPreferenceChange(RowFrames.self)   { frames = $0 }
         .onPreferenceChange(RowOrder.self)    { order = $0 }
         .onPreferenceChange(GroupFrames.self) { groups = $0 }
-        .overlay(alignment: .bottomTrailing) {
-            MagicPlus(route: route, frames: frames, order: order, groups: groups) { index, heading, day in
-                create(at: index, heading: heading, day: day)
+        // Things: ett tryck utanför kortet stänger det. Fångaren lämnar en
+        // lucka där kortet står, så andra rader går att öppna med ETT tryck.
+        .overlay {
+            if let id = ui.openID, let f = frames[id] {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: max(0, f.minY))
+                        .contentShape(Rectangle()).onTapGesture { closeCard() }
+                    Spacer().frame(height: f.height)
+                    Color.clear.frame(maxHeight: .infinity)
+                        .contentShape(Rectangle()).onTapGesture { closeCard() }
+                }
+                .ignoresSafeArea()
             }
-            .padding(.trailing, 18)
-            .padding(.bottom, 14)
         }
-        .sheet(item: Binding(get: { launcher.needsArea.map(IdentifiedTodo.init) },
-                             set: { if $0 == nil { launcher.needsArea = nil } })) { wrap in
-            MoveSheet(todo: store.binding(for: wrap.todo.id), forFocus: true)
-                .presentationDetents([.medium, .large])
+        .overlay(alignment: .bottomTrailing) {
+            if !ui.selecting {
+                MagicPlus(route: route, frames: frames, order: order, groups: groups) { index, heading, day in
+                    create(at: index, heading: heading, day: day)
+                }
+                .padding(.trailing, 18).padding(.bottom, 14)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if ui.selecting { SelectionBar().environmentObject(ui) }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: ui.selecting)
+        .sheet(item: $newProjectFor) { box in
+            NewProjectSheet(area: box.area) { p in path.append(.project(p.id)) }
                 .environmentObject(store)
         }
-        .sheet(item: Binding(get: { newProjectArea.map { AreaBox(id: $0) } },
-                             set: { if $0 == nil { newProjectArea = nil } })) { box in
-            NewProjectSheet(area: box.id) { p in
-                newProjectArea = nil
-                path.append(.project(p.id))
-            }
-            .environmentObject(store)
+        .sheet(item: Binding(get: { ui.whenTarget.map(Ident.init) },
+                             set: { if $0 == nil { ui.whenTarget = nil } })) { w in
+            WhenSheet(when: store.binding(for: w.id).when, evening: store.binding(for: w.id).evening)
+                .presentationDetents([.medium, .large]).environmentObject(store)
+        }
+        .sheet(item: Binding(get: { ui.moveTarget.map(Ident.init) },
+                             set: { if $0 == nil { ui.moveTarget = nil } })) { w in
+            MoveSheet(todo: store.binding(for: w.id), forFocus: false)
+                .presentationDetents([.medium, .large]).environmentObject(store)
+        }
+        .sheet(item: Binding(get: { ui.repeatTarget.map(Ident.init) },
+                             set: { if $0 == nil { ui.repeatTarget = nil } })) { w in
+            RepeatSheet(rule: store.binding(for: w.id).repeatRule)
+                .presentationDetents([.medium]).environmentObject(store)
+        }
+        .sheet(item: Binding(get: { launcher.needsArea.map { Ident(id: $0.id) } },
+                             set: { if $0 == nil { launcher.needsArea = nil } })) { w in
+            MoveSheet(todo: store.binding(for: w.id), forFocus: true)
+                .presentationDetents([.medium, .large]).environmentObject(store)
         }
     }
 
     // MARK: - Hemskärmen
 
     private var home: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    listsCard
-                    SectionLabel("Livsområden")
-                    areasCard
-                } else {
-                    searchResults
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 96)
-        }
-        .background(Palette.bg)
-        .navigationTitle("Listor")
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Sök uppgifter och projekt")
-    }
-
-    private var listsCard: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(SmartList.allCases.enumerated()), id: \.element) { i, l in
-                NavRow(symbol: l.symbol, title: l.title, tint: l.tint,
-                       badge: store.count(l)) { path.append(.list(l)) }
-                if i < SmartList.allCases.count - 1 { Hairline(inset: 54) }
-            }
-        }
-        .sheetCard()
-    }
-
-    private var areasCard: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(Area.all.enumerated()), id: \.element) { i, a in
-                NavRow(symbol: a.symbol, title: a.name, tint: a.tint,
-                       badge: store.areaBadge(a.id)) { path.append(.area(a.id)) }
-                ForEach(store.projects(in: a.id)) { p in
-                    Hairline(inset: 54)
-                    let pr = store.progress(p.id)
-                    NavRow(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
-                           title: p.title, tint: a.tint, indent: 24,
-                           trailing: pr.total > 0 ? "\(pr.done)/\(pr.total)" : nil) {
-                        path.append(.project(p.id))
+        List {
+            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                Section {
+                    ForEach(SmartList.allCases) { l in
+                        NavigationLink(value: Route.list(l)) {
+                            NavRowLabel(symbol: l.symbol, title: l.title, tint: l.tint,
+                                        badge: store.count(l))
+                        }
                     }
                 }
-                if i < Area.all.count - 1 { Hairline(inset: 54) }
+                Section("Livsområden") {
+                    ForEach(Area.all) { a in
+                        NavigationLink(value: Route.area(a.id)) {
+                            NavRowLabel(symbol: a.symbol, title: a.name, tint: a.tint,
+                                        badge: store.areaBadge(a.id))
+                        }
+                        ForEach(store.projects(in: a.id)) { p in
+                            let pr = store.progress(p.id)
+                            NavigationLink(value: Route.project(p.id)) {
+                                NavRowLabel(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
+                                            title: p.title, tint: a.tint,
+                                            trailing: pr.total > 0 ? "\(pr.done)/\(pr.total)" : nil)
+                                    .padding(.leading, 22)
+                            }
+                        }
+                    }
+                }
+            } else {
+                searchResults
             }
         }
-        .sheetCard()
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Palette.bg)
+        .navigationTitle("Listor")
+        .searchable(text: $query, prompt: "Sök uppgifter och projekt")
     }
 
     @ViewBuilder private var searchResults: some View {
@@ -130,24 +148,27 @@ struct ListsHomeView: View {
                       body: "Inget som heter ”\(query.trimmingCharacters(in: .whitespaces))”.")
         } else {
             if !hits.projects.isEmpty {
-                SectionLabel("Projekt")
-                VStack(spacing: 0) {
-                    ForEach(Array(hits.projects.enumerated()), id: \.element) { i, p in
+                Section("Projekt") {
+                    ForEach(hits.projects) { p in
                         let pr = store.progress(p.id)
-                        NavRow(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
-                               title: p.title, tint: Area.of(p.areaID)?.tint ?? Palette.inbox) {
-                            path.append(.project(p.id))
+                        NavigationLink(value: Route.project(p.id)) {
+                            NavRowLabel(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
+                                        title: p.title, tint: Area.of(p.areaID)?.tint ?? Palette.inbox)
                         }
-                        if i < hits.projects.count - 1 { Hairline(inset: 54) }
                     }
                 }
-                .sheetCard()
             }
             if !hits.todos.isEmpty {
-                SectionLabel("Uppgifter")
-                TodoCard(todos: hits.todos, openID: $openID)
+                Section("Uppgifter") {
+                    ForEach(hits.todos) { TodoRowView(todo: $0).todoRow($0) }
+                }
             }
         }
+    }
+
+    private func closeCard() {
+        Haptics.tap()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) { ui.openID = nil }
     }
 
     // MARK: - Nytt
@@ -157,7 +178,7 @@ struct ListsHomeView: View {
             var h = Todo(); h.kind = .heading; h.projectID = pid
             store.insert(h, at: index)
             Haptics.success()
-            openID = nil
+            ui.openID = nil
             return
         }
         var t = Todo()
@@ -178,132 +199,66 @@ struct ListsHomeView: View {
         case .none:
             break                                   // hemskärmen: hamnar i Inkorgen
         }
-        if case .list(.upcoming) = route, let d = day { t.when = .on(d) }
         store.insert(t, at: index)
         Haptics.success()
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) { openID = t.id }
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) { ui.openID = t.id }
     }
 }
 
-private struct IdentifiedTodo: Identifiable { let todo: Todo; var id: String { todo.id } }
-private struct AreaBox: Identifiable { let id: AreaID?; var idString: String { id?.rawValue ?? "inbox" } }
-extension AreaBox { var identity: String { idString } }
+// MARK: - Markeringsläget
 
-// MARK: - Byggstenar
-
-struct SectionLabel: View {
-    let text: String
-    init(_ t: String) { text = t }
-    var body: some View {
-        HStack {
-            Text(text.uppercased())
-                .font(Typo.section).kerning(0.8)
-                .foregroundStyle(Palette.third)
-            Spacer()
-        }
-        .padding(.top, 22).padding(.bottom, 7).padding(.horizontal, 4)
-    }
-}
-
-struct EmptyNote: View {
-    let title: String
-    let message: String
-    init(title: String, body: String) { self.title = title; self.message = body }
-
-    var body: some View {
-        VStack(spacing: 5) {
-            Text(title).font(.system(size: 16.5, weight: .semibold)).foregroundStyle(Palette.second)
-            Text(message).font(.system(size: 14)).foregroundStyle(Palette.third)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 46).padding(.horizontal, 24)
-    }
-}
-
-/// En navigeringsrad: lista, livsområde eller projekt.
-struct NavRow: View {
-    var symbol: String? = nil
-    var pie: Double? = nil
-    let title: String
-    let tint: Color
-    var badge: Int = 0
-    var indent: CGFloat = 0
-    var trailing: String? = nil
-    let action: () -> Void
-
-    var body: some View {
-        Button { Haptics.tap(); action() } label: {
-            HStack(spacing: 12) {
-                Group {
-                    if let p = pie { ProgressPie(fraction: p, tint: tint).frame(width: 19, height: 19) }
-                    else if let s = symbol {
-                        Image(systemName: s)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(tint)
-                            .frame(width: 28, height: 28)
-                            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                }
-                .frame(width: 28)
-                Text(title)
-                    .font(Typo.row)
-                    .foregroundStyle(Palette.label)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                if let t = trailing {
-                    Text(t).font(Typo.meta).foregroundStyle(Palette.third).monospacedDigit()
-                } else if badge > 0 {
-                    Text("\(badge)").font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Palette.third).monospacedDigit()
-                }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Palette.third.opacity(0.6))
-            }
-            .padding(.leading, 14 + indent).padding(.trailing, 14)
-            .padding(.vertical, 11)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct ProgressPie: View {
-    let fraction: Double
-    let tint: Color
-    var body: some View {
-        ZStack {
-            if fraction >= 1 {
-                Circle().fill(tint)
-                Image(systemName: "checkmark").font(.system(size: 9, weight: .black))
-                    .foregroundStyle(Palette.card)
-            } else {
-                Circle().stroke(Palette.third.opacity(0.45), lineWidth: 2.4)
-                Circle().trim(from: 0, to: max(0.001, fraction))
-                    .stroke(tint, style: .init(lineWidth: 2.4, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: fraction)
-    }
-}
-
-/// Ett ark med uppgiftsrader, med hårfina linjer emellan.
-struct TodoCard: View {
+/// Things: svep vänster för att markera, markera fler, och gör något
+/// med allihop på en gång.
+struct SelectionBar: View {
     @EnvironmentObject var store: Store
-    let todos: [Todo]
-    @Binding var openID: String?
-    var context: TodoRowView.RowContext = .init()
+    @EnvironmentObject var ui: ListUI
+    @State private var when = false
+    @State private var move = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(todos.enumerated()), id: \.element.id) { i, t in
-                TodoRowView(todo: t, context: context, openID: $openID)
-                    .preference(key: RowOrder.self, value: [t.id])
-                if i < todos.count - 1 { Hairline(inset: 41) }
+        HStack(spacing: 0) {
+            action("calendar", "När") { when = true }
+            action("square.stack.3d.up", "Flytta") { move = true }
+            action("checkmark.circle", "Klart") {
+                Sound.shared.check(); Haptics.success()
+                withAnimation { ui.selection.forEach { store.setDone($0, true) } }
+                ui.clearSelection()
+            }
+            action("trash", "Radera", destructive: true) {
+                Haptics.warning()
+                withAnimation { ui.selection.forEach { store.delete($0) } }
+                ui.clearSelection()
             }
         }
-        .sheetCard()
+        .padding(.horizontal, 8).padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Hairline() }
+        .overlay(alignment: .topTrailing) {
+            Button { Haptics.tap(); ui.clearSelection() } label: {
+                Text("\(ui.selection.count) markerade · Avbryt")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Palette.third)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 14).padding(.top, -16)
+        }
+        .sheet(isPresented: $when) { BulkWhenSheet().environmentObject(store).environmentObject(ui) }
+        .sheet(isPresented: $move) { BulkMoveSheet().environmentObject(store).environmentObject(ui) }
+    }
+
+    private func action(_ symbol: String, _ title: String,
+                        destructive: Bool = false, run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 17, weight: .medium))
+                Text(title).font(.system(size: 10.5, weight: .medium))
+            }
+            .foregroundStyle(destructive ? Palette.deadline : Palette.blue)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PressScale())
     }
 }
+
+private struct Ident: Identifiable { let id: String }
+private struct AreaBox: Identifiable { let area: AreaID?; var id: String { area?.rawValue ?? "inbox" } }
