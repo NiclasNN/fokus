@@ -1,16 +1,15 @@
 import SwiftUI
 
-/// Things magiska plus. Ett tryck lägger en uppgift sist. Lyfter man knappen
-/// och drar hamnar uppgiften där man släpper — och åt vänster i ett projekt
-/// blir det en rubrik i stället.
+/// Things magiska plus. Ett tryck lägger en uppgift sist i listan; lyfter man
+/// knappen och drar hamnar den där man släpper.
 struct MagicPlus: View {
     @EnvironmentObject var store: Store
     let route: Route?
     let frames: [String: CGRect]
     let order: [String]
     let groups: [String: CGRect]
-    /// (index i S.todos, är rubrik, dag om man släppte i en dagsgrupp)
-    var onCreate: (Int?, Bool, DayKey?) -> Void
+    /// (index i S.todos, dag om man släppte i en dagsgrupp)
+    var onCreate: (Int?, DayKey?) -> Void
 
     @State private var drag: CGSize = .zero
     @State private var lifted = false
@@ -19,12 +18,10 @@ struct MagicPlus: View {
     private struct Target: Equatable {
         var localIndex: Int
         var line: CGRect        // var strecket ritas, i globala koordinater
-        var heading: Bool
         var day: DayKey?
     }
 
     private var tint: Color { store.activeTint }
-    private var inProject: Bool { if case .project = route { return true }; return false }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -32,11 +29,11 @@ struct MagicPlus: View {
                 GeometryReader { _ in
                     Capsule()
                         .fill(tint)
-                        .frame(width: t.heading ? 84 : t.line.width, height: t.heading ? 3 : 2)
+                        .frame(width: t.line.width, height: 2)
                         .overlay(alignment: .leading) {
                             Circle().fill(tint).frame(width: 8, height: 8).offset(x: -3)
                         }
-                        .position(x: t.heading ? t.line.minX + 42 : t.line.midX, y: t.line.minY)
+                        .position(x: t.line.midX, y: t.line.minY)
                         .ignoresSafeArea()
                 }
                 .transition(.opacity)
@@ -77,7 +74,6 @@ struct MagicPlus: View {
     }
 
     private func hint(_ t: Target) -> String {
-        if t.heading { return "Ny rubrik" }
         if let d = t.day { return Sv.day(d) }
         return "Ny uppgift"
     }
@@ -101,16 +97,15 @@ struct MagicPlus: View {
                 target = nil
                 if !wasLifted {
                     Haptics.press()
-                    onCreate(nil, false, nil)          // ett tryck: sist i listan
+                    onCreate(nil, nil)                 // ett tryck: sist i listan
                 } else {
-                    onCreate(t.map { globalIndex($0.localIndex) }, t?.heading ?? false, t?.day)
+                    onCreate(t.map { globalIndex($0.localIndex) }, t?.day)
                 }
             }
     }
 
     private func aim(at point: CGPoint) {
         let visible = order.compactMap { id -> (String, CGRect)? in frames[id].map { (id, $0) } }
-        let heading = inProject && point.x < 84
 
         guard !visible.isEmpty else {
             if target != nil { target = nil }
@@ -125,7 +120,7 @@ struct MagicPlus: View {
         let day = groups.first { $0.value.contains(CGPoint(x: $0.value.midX, y: point.y)) }
             .flatMap { DayKey(raw: $0.key) }
 
-        let next = Target(localIndex: idx, line: line, heading: heading, day: day)
+        let next = Target(localIndex: idx, line: line, day: day)
         if next != target {
             Haptics.tick()
             target = next

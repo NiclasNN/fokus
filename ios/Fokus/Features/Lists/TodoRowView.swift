@@ -120,7 +120,6 @@ struct TodoRowView: View {
     var context: RowContext = .init()
 
     struct RowContext {
-        var hideProject = false
         var hideArea = false
         var hideWhen = false
     }
@@ -288,9 +287,7 @@ struct TodoRowView: View {
             ))
         }
 
-        if let p = store.project(todo.projectID), !context.hideProject {
-            chip("chevron.right", p.title, tint)
-        } else if let a = Area.of(todo.areaID), todo.projectID == nil, !context.hideArea {
+        if let a = Area.of(todo.areaID), !context.hideArea {
             chip(a.symbol, a.short, a.tint)
         }
         if !todo.done, !context.hideWhen {

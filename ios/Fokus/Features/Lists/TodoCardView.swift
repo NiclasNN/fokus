@@ -137,11 +137,7 @@ struct TodoCardView: View {
         let pass = todo.sessionCount == 1 ? "pass" : "pass"
         return "\(Sv.short(seconds: todo.focusedSeconds)) · \(todo.sessionCount) \(pass)"
     }
-    private var whereLabel: String {
-        if let p = store.project(todo.projectID) { return p.title }
-        if let a = Area.of(todo.areaID) { return a.short }
-        return "Lägg i…"
-    }
+    private var whereLabel: String { Area.of(todo.areaID)?.short ?? "Lägg i…" }
 
     private func pill(_ text: String?, _ symbol: String, set: Bool,
                       color: Color? = nil, plain: Bool = false,

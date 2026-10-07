@@ -3,7 +3,6 @@ import SwiftUI
 enum Route: Hashable {
     case list(SmartList)
     case area(AreaID)
-    case project(String)
 }
 
 /// Rader i visningsordning, och dagsgruppernas ytor. Det magiska plusset
@@ -29,7 +28,6 @@ struct ListsHomeView: View {
     @State private var frames: [String: CGRect] = [:]
     @State private var order: [String] = []
     @State private var groups: [String: CGRect] = [:]
-    @State private var newProjectFor: AreaBox?
 
     private var route: Route? { path.last }
 
@@ -40,7 +38,6 @@ struct ListsHomeView: View {
                     switch r {
                     case .list(let l):    SmartListView(list: l)
                     case .area(let a):    AreaView(area: a)
-                    case .project(let p): ProjectDetailView(projectID: p)
                     }
                 }
         }
@@ -64,8 +61,8 @@ struct ListsHomeView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if !ui.selecting {
-                MagicPlus(route: route, frames: frames, order: order, groups: groups) { index, heading, day in
-                    create(at: index, heading: heading, day: day)
+                MagicPlus(route: route, frames: frames, order: order, groups: groups) { index, day in
+                    create(at: index, day: day)
                 }
                 .padding(.trailing, 18).padding(.bottom, 14)
             }
@@ -74,10 +71,6 @@ struct ListsHomeView: View {
             if ui.selecting { SelectionBar().environmentObject(ui) }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: ui.selecting)
-        .sheet(item: $newProjectFor) { box in
-            NewProjectSheet(area: box.area) { p in path.append(.project(p.id)) }
-                .environmentObject(store)
-        }
         .sheet(item: Binding(get: { ui.whenTarget.map(Ident.init) },
                              set: { if $0 == nil { ui.whenTarget = nil } })) { w in
             WhenSheet(when: store.binding(for: w.id).when, evening: store.binding(for: w.id).evening)
@@ -119,15 +112,6 @@ struct ListsHomeView: View {
                             NavRowLabel(symbol: a.symbol, title: a.name, tint: a.tint,
                                         badge: store.areaBadge(a.id))
                         }
-                        ForEach(store.projects(in: a.id)) { p in
-                            let pr = store.progress(p.id)
-                            NavigationLink(value: Route.project(p.id)) {
-                                NavRowLabel(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
-                                            title: p.title, tint: a.tint,
-                                            trailing: pr.total > 0 ? "\(pr.done)/\(pr.total)" : nil)
-                                    .padding(.leading, 22)
-                            }
-                        }
                     }
                 }
             } else {
@@ -143,25 +127,12 @@ struct ListsHomeView: View {
 
     @ViewBuilder private var searchResults: some View {
         let hits = store.search(query)
-        if hits.todos.isEmpty && hits.projects.isEmpty {
+        if hits.isEmpty {
             EmptyNote(title: "Ingen träff",
                       body: "Inget som heter ”\(query.trimmingCharacters(in: .whitespaces))”.")
         } else {
-            if !hits.projects.isEmpty {
-                Section("Projekt") {
-                    ForEach(hits.projects) { p in
-                        let pr = store.progress(p.id)
-                        NavigationLink(value: Route.project(p.id)) {
-                            NavRowLabel(pie: pr.total == 0 ? 0 : Double(pr.done) / Double(pr.total),
-                                        title: p.title, tint: Area.of(p.areaID)?.tint ?? Palette.inbox)
-                        }
-                    }
-                }
-            }
-            if !hits.todos.isEmpty {
-                Section("Uppgifter") {
-                    ForEach(hits.todos) { TodoRowView(todo: $0).todoRow($0) }
-                }
+            Section("Uppgifter") {
+                ForEach(hits) { TodoRowView(todo: $0).todoRow($0) }
             }
         }
     }
@@ -173,14 +144,7 @@ struct ListsHomeView: View {
 
     // MARK: - Nytt
 
-    private func create(at index: Int?, heading: Bool, day: DayKey?) {
-        if heading, case .project(let pid)? = route {
-            var h = Todo(); h.kind = .heading; h.projectID = pid
-            store.insert(h, at: index)
-            Haptics.success()
-            ui.openID = nil
-            return
-        }
+    private func create(at index: Int?, day: DayKey?) {
         var t = Todo()
         t.durationMinutes = store.s.settings.lastDurationMinutes
         switch route {
@@ -193,9 +157,6 @@ struct ListsHomeView: View {
             }
         case .area(let a):
             t.areaID = a
-        case .project(let pid):
-            t.projectID = pid
-            t.areaID = store.project(pid)?.areaID
         case .none:
             break                                   // hemskärmen: hamnar i Inkorgen
         }
@@ -261,4 +222,3 @@ struct SelectionBar: View {
 }
 
 private struct Ident: Identifiable { let id: String }
-private struct AreaBox: Identifiable { let area: AreaID?; var id: String { area?.rawValue ?? "inbox" } }

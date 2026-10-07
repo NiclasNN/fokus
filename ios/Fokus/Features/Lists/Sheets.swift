@@ -164,15 +164,11 @@ struct MoveSheet: View {
                 Section {
                     if !forFocus {
                         PickRow(symbol: "tray", title: "Inkorgen", color: Palette.inbox,
-                                on: !todo.isFiled) { place(nil, nil) }
+                                on: !todo.isFiled) { place(nil) }
                     }
                     ForEach(Area.all) { a in
                         PickRow(symbol: a.symbol, title: a.name, color: a.tint,
-                                on: todo.areaID == a.id && todo.projectID == nil) { place(a.id, nil) }
-                        ForEach(store.projects(in: a.id)) { p in
-                            PickRow(symbol: "chevron.right", title: p.title, color: a.tint,
-                                    on: todo.projectID == p.id, indent: 22) { place(a.id, p.id) }
-                        }
+                                on: todo.areaID == a.id) { place(a.id) }
                     }
                 }
             }
@@ -180,9 +176,8 @@ struct MoveSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
     }
-    private func place(_ area: AreaID?, _ project: String?) {
+    private func place(_ area: AreaID?) {
         todo.areaID = area
-        todo.projectID = project
         Haptics.press()
         dismiss()
         if forFocus, area != nil {
@@ -223,50 +218,6 @@ struct DurationSheet: View {
     }
 }
 
-// MARK: - Nytt projekt
-
-struct NewProjectSheet: View {
-    @EnvironmentObject var store: Store
-    let area: AreaID?
-    var onCreate: (Project) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var title = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Vad ska bli gjort?", text: $title)
-                        .focused($focused)
-                        .submitLabel(.done)
-                        .onSubmit(create)
-                } footer: {
-                    Text("Ett projekt är flera steg mot ett mål"
-                         + (Area.of(area).map { " — det här hamnar i \($0.name)" } ?? "") + ".")
-                }
-            }
-            .navigationTitle("Nytt projekt")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Avbryt") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Skapa", action: create)
-                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            .onAppear { focused = true }
-        }
-    }
-    private func create() {
-        let v = title.trimmingCharacters(in: .whitespaces)
-        guard !v.isEmpty else { return }
-        let p = store.addProject(v, in: area)
-        Haptics.success()
-        dismiss()
-        onCreate(p)
-    }
-}
 
 // MARK: - Upprepning
 
@@ -344,14 +295,9 @@ struct BulkMoveSheet: View {
         NavigationStack {
             List {
                 Section {
-                    PickRow(symbol: "tray", title: "Inkorgen", color: Palette.inbox) { place(nil, nil) }
+                    PickRow(symbol: "tray", title: "Inkorgen", color: Palette.inbox) { place(nil) }
                     ForEach(Area.all) { a in
-                        PickRow(symbol: a.symbol, title: a.name, color: a.tint) { place(a.id, nil) }
-                        ForEach(store.projects(in: a.id)) { p in
-                            PickRow(symbol: "chevron.right", title: p.title, color: a.tint, indent: 22) {
-                                place(a.id, p.id)
-                            }
-                        }
+                        PickRow(symbol: a.symbol, title: a.name, color: a.tint) { place(a.id) }
                     }
                 }
             }
@@ -359,10 +305,10 @@ struct BulkMoveSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
     }
-    private func place(_ area: AreaID?, _ project: String?) {
+    private func place(_ area: AreaID?) {
         for id in ui.selection {
             guard var t = store.todo(id) else { continue }
-            t.areaID = area; t.projectID = project
+            t.areaID = area
             store.update(t)
         }
         Haptics.press(); ui.clearSelection(); dismiss()

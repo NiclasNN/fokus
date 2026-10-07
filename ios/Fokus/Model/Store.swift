@@ -31,6 +31,24 @@ final class Store: ObservableObject {
         guard let data = try? Data(contentsOf: Self.fileURL),
               let state = try? JSONDecoder.fokus.decode(AppState.self, from: data) else { return }
         s = state
+        flattenProjects()
+    }
+
+    /// Projektlagret är borta. Uppgifter som låg i ett projekt flyttas upp
+    /// till projektets livsområde — ingen uppgift försvinner. Rubriker var
+    /// bara etiketter inuti projekt och följer med bort.
+    private func flattenProjects() {
+        guard !s.projects.isEmpty || s.todos.contains(where: { $0.isHeading }) else { return }
+        let areaOf = Dictionary(uniqueKeysWithValues: s.projects.map { ($0.id, $0.areaID) })
+        s.todos.removeAll { $0.isHeading }
+        for i in s.todos.indices {
+            if let pid = s.todos[i].projectID {
+                if s.todos[i].areaID == nil { s.todos[i].areaID = areaOf[pid] ?? nil }
+                s.todos[i].projectID = nil
+            }
+        }
+        s.projects.removeAll()
+        saveNow()
     }
     /// Skrivningen samlas ihop — varje tangenttryck i ett kort ska inte röra disken.
     func save() {
@@ -50,49 +68,38 @@ final class Store: ObservableObject {
     // MARK: - Uppslag
 
     func todo(_ id: String?) -> Todo? { id.flatMap { i in s.todos.first { $0.id == i } } }
-    func project(_ id: String?) -> Project? { id.flatMap { i in s.projects.first { $0.id == i } } }
     func index(of id: String) -> Int? { s.todos.firstIndex { $0.id == id } }
 
-    /// Uppgiftens färg: områdets, projektets områdes, annars inkorgsblått.
-    func tint(for t: Todo) -> Color {
-        if let a = Area.of(t.areaID) { return a.tint }
-        if let p = project(t.projectID), let a = Area.of(p.areaID) { return a.tint }
-        return Palette.inbox
-    }
+    /// Uppgiftens färg: livsområdets, annars inkorgsblått.
+    func tint(for t: Todo) -> Color { Area.of(t.areaID)?.tint ?? Palette.inbox }
     /// Accenten för hela appen just nu: uppgiftens färg om ett pass har en,
     /// annars det valda områdets.
     var activeTint: Color {
         if let t = currentTodo { return tint(for: t) }
         return Area.of(s.timer.areaID)?.tint ?? Palette.blue
     }
-    func area(for t: Todo) -> Area? {
-        Area.of(t.areaID) ?? Area.of(project(t.projectID)?.areaID)
-    }
+    func area(for t: Todo) -> Area? { Area.of(t.areaID) }
 
     // MARK: - Listorna
 
     func items(in list: SmartList) -> [Todo] {
         if list == .logbook {
-            return s.todos.filter { !$0.isHeading && $0.done }
+            return s.todos.filter { $0.done }
                 .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
                 .prefix(200).map { $0 }
         }
         return s.todos.filter { list.contains($0) }
     }
-    func projects(in list: SmartList) -> [Project] { s.projects.filter { list.contains($0) } }
     func count(_ list: SmartList) -> Int {
         guard list.countsBadge else { return 0 }
-        return items(in: list).count + projects(in: list).count
+        return items(in: list).count
     }
 
-    func projects(in area: AreaID) -> [Project] { s.projects.filter { $0.areaID == area && !$0.done } }
     func looseTodos(in area: AreaID) -> [Todo] {
-        s.todos.filter { !$0.isHeading && $0.areaID == area && $0.projectID == nil
-                         && !$0.done && $0.when != .someday }
+        s.todos.filter { $0.areaID == area && !$0.done && $0.when != .someday }
     }
     func somedayTodos(in area: AreaID) -> [Todo] {
-        s.todos.filter { !$0.isHeading && $0.areaID == area && $0.projectID == nil
-                         && !$0.done && $0.when == .someday }
+        s.todos.filter { $0.areaID == area && !$0.done && $0.when == .someday }
     }
     /// Allt som går att ta tag i i ett livsområde: inte klart, inte parkerat
     /// under "någon gång", och inte daterat i framtiden. Uppgiften hör till
@@ -104,8 +111,7 @@ final class Store: ObservableObject {
     func actionable(in area: AreaID) -> [Todo] {
         let today = DayKey.today
         return s.todos.filter {
-            !$0.isHeading && !$0.done
-                && self.area(for: $0)?.id == area
+            !$0.done && self.area(for: $0)?.id == area
                 && $0.when != .someday
                 && !($0.when?.day.map { $0 > today } ?? false)
         }
@@ -119,28 +125,16 @@ final class Store: ObservableObject {
     func todayCount(in area: AreaID) -> Int { actionable(in: area).filter(isToday).count }
     func areaBadge(_ area: AreaID) -> Int { actionable(in: area).count }
 
-    /// Rubriker och uppgifter i arrayordning — ordningen ÄR sorteringen.
-    func rows(inProject id: String) -> [Todo] {
-        s.todos.filter { $0.projectID == id && ($0.isHeading || !$0.done) }
-    }
-    func doneRows(inProject id: String) -> [Todo] {
-        s.todos.filter { !$0.isHeading && $0.projectID == id && $0.done }
-    }
-    func progress(_ projectID: String) -> (done: Int, total: Int) {
-        let all = s.todos.filter { !$0.isHeading && $0.projectID == projectID }
-        return (all.filter(\.done).count, all.count)
-    }
     var allTags: [String] { Array(Set(s.todos.flatMap(\.tags))).sorted() }
 
-    func search(_ q: String) -> (todos: [Todo], projects: [Project]) {
+    func search(_ q: String) -> [Todo] {
         let n = q.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !n.isEmpty else { return ([], []) }
+        guard !n.isEmpty else { return [] }
         let t = s.todos.filter {
-            !$0.isHeading && ($0.title.lowercased().contains(n)
-                              || $0.notes.lowercased().contains(n)
-                              || $0.tags.contains { $0.lowercased().contains(n) })
+            $0.title.lowercased().contains(n) || $0.notes.lowercased().contains(n)
+                || $0.tags.contains { $0.lowercased().contains(n) }
         }
-        return (Array(t.prefix(40)), s.projects.filter { $0.title.lowercased().contains(n) })
+        return Array(t.prefix(40))
     }
 
     // MARK: - Ändringar
@@ -203,9 +197,6 @@ final class Store: ObservableObject {
         save()
     }
 
-    func focusedSeconds(inProject id: String) -> Int {
-        s.todos.filter { $0.projectID == id }.reduce(0) { $0 + $1.focusedSeconds }
-    }
     func focusedSeconds(inArea id: AreaID) -> Int {
         s.todos.filter { area(for: $0)?.id == id }.reduce(0) { $0 + $1.focusedSeconds }
     }
@@ -216,23 +207,6 @@ final class Store: ObservableObject {
         let planned = items.reduce(0) { $0 + $1.durationMinutes * 60 }
         let done = seconds(on: DayKey.today)
         return (planned, done)
-    }
-
-    func addProject(_ title: String, in area: AreaID?) -> Project {
-        let p = Project(areaID: area, title: title)
-        s.projects.append(p)
-        save()
-        return p
-    }
-    func deleteProject(_ id: String) {
-        s.todos.removeAll { $0.projectID == id }
-        s.projects.removeAll { $0.id == id }
-        save()
-    }
-    func update(_ p: Project) {
-        guard let i = s.projects.firstIndex(where: { $0.id == p.id }) else { return }
-        s.projects[i] = p
-        save()
     }
 
     // MARK: - Timern
@@ -253,20 +227,37 @@ final class Store: ObservableObject {
         startTicking()
         Sound.shared.start(); Haptics.tap()
         scheduleAlarm()
+        showOnLockScreen()
         save()
+    }
+
+    /// Låsskärmen ska veta vad du fokuserar på, inte bara att något tickar.
+    private func showOnLockScreen() {
+        // Utan vald uppgift skulle sessionTitle ge områdets namn, och då stod
+        // det två gånger på låsskärmen.
+        let heading = currentTodo?.title.isEmpty == false ? currentTodo!.title : "Fritt pass"
+        FokusLive.start(title: heading,
+                        areaName: Area.of(s.timer.areaID)?.name ?? "Fokus",
+                        tint: activeTint,
+                        totalSeconds: s.timer.durationSeconds,
+                        endsAt: Date().addingTimeInterval(s.timer.remaining))
     }
     func pauseTimer() {
         guard s.timer.status == .running, let st = s.timer.startedAt else { return }
         s.timer.elapsedBefore += Date().timeIntervalSince(st)
         s.timer.status = .paused
         s.timer.startedAt = nil
-        stopTicking(); cancelAlarm(); Haptics.tap(); save()
+        stopTicking(); cancelAlarm(); Haptics.tap()
+        FokusLive.pause(remaining: s.timer.remaining)
+        save()
     }
     func resetTimer() {
         s.timer.status = .idle
         s.timer.elapsedBefore = 0
         s.timer.startedAt = nil
-        stopTicking(); cancelAlarm(); Haptics.tap(); save()
+        stopTicking(); cancelAlarm(); Haptics.tap()
+        FokusLive.end()
+        save()
     }
     /// Avsluta i förtid men behåll tiden. Under en minut är inte ett pass.
     func finishEarly() {
@@ -289,6 +280,7 @@ final class Store: ObservableObject {
         s.timer.elapsedBefore = 0
         s.timer.startedAt = nil
         stopTicking(); cancelAlarm()
+        FokusLive.end()
         Sound.shared.done(); Haptics.success()
         save()
     }
@@ -330,6 +322,10 @@ final class Store: ObservableObject {
         } else {
             startTicking()
             scheduleAlarm()
+            // Appen kan ha startats om — adoptera aktiviteten i stället för
+            // att lägga en andra på låsskärmen.
+            FokusLive.adopt()
+            showOnLockScreen()
         }
     }
 
