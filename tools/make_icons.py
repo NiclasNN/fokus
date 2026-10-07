@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the Fokus app icons — pure stdlib PNG writer, no dependencies."""
+"""Fokus app-ikoner — ren stdlib, inga beroenden.
+
+Märket: en bock i en öppen ring. Bocken säger uppgift, ringen är samma
+ratt som appens timer och sluter sig inte — ett pass som pågår.
+Allt ritas som signerade avstånd och antialiasas med supersampling.
+"""
 import math, struct, zlib, os
 
 OUT = os.path.join(os.path.dirname(__file__), '..', 'icons')
@@ -17,54 +22,75 @@ def png(path, w, h, rgba):
 
 def lerp(a, b, t): return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
 def smooth(e0, e1, x):
+    if e1 == e0: return 0.0 if x < e0 else 1.0
     t = min(1.0, max(0.0, (x - e0) / (e1 - e0)))
     return t * t * (3 - 2 * t)
+def seg_dist(px, py, ax, ay, bx, by):
+    """Avstånd till ett linjesegment — bockens streck har runda ändar."""
+    vx, vy = bx - ax, by - ay
+    wx, wy = px - ax, py - ay
+    L = vx*vx + vy*vy
+    t = 0.0 if L == 0 else min(1.0, max(0.0, (wx*vx + wy*vy) / L))
+    return math.hypot(wx - vx*t, wy - vy*t)
 
-BG0, BG1 = (18, 22, 34), (5, 6, 10)
-ACC, ACC_HI = (76, 141, 255), (150, 186, 255)
-ARC_END = 300.0          # degrees of the sweep, leaves a premium gap
-def sample(x, y, S, ring_r, ring_w, transparent_bg=False):
-    cx = cy = S / 2.0
-    dx, dy = x - cx, y - cy
-    d = math.hypot(dx, dy)
+# Himmelsblått uppe till vänster, djupt blått nere till höger.
+TOP, BOT = (96, 158, 255), (26, 88, 221)
+WHITE = (255, 255, 255)
 
-    if transparent_bg:
-        col, a = (255, 255, 255), 0.0
+# Normaliserade mått (andel av sidan). Ändra här, inte i sample().
+RING_R, RING_W = 0.360, 0.030
+GAP0, GAP1 = 292.0, 360.0          # ringens öppning, grader från kl 12
+CHK = ((0.262, 0.502), (0.432, 0.668), (0.748, 0.322))
+CHK_W = 0.097
+RADIUS = 0.215                      # hörnradie när brickan bakas in
+
+def sample(x, y, S, scale, rounded, flat):
+    """Returnerar (färg, alfa) för en punkt i pixelkoordinater."""
+    u, v = x / S, y / S
+    cx = cy = 0.5
+
+    if flat:                                    # badge: bara bocken, vit på intet
+        col, a = WHITE, 0.0
     else:
-        t = (x + y) / (2.0 * S)
-        col = lerp(BG0, BG1, t)
-        gx, gy = 0.30 * S, 0.24 * S
-        g = max(0.0, 1.0 - math.hypot(x - gx, y - gy) / (0.85 * S)) ** 2.4
-        col = tuple(min(255, col[i] + (ACC[i] - col[i]) * 0.30 * g) for i in range(3))
+        col = lerp(TOP, BOT, (u + v) * 0.5)
+        # mjukt ljus uppe till vänster — brickan ska se välvd ut, inte tryckt
+        g = max(0.0, 1.0 - math.hypot(u - 0.26, v - 0.20) / 0.92) ** 2.6
+        col = tuple(min(255, col[i] + (255 - col[i]) * 0.22 * g) for i in range(3))
         a = 1.0
+        if rounded:                             # rundad kvadrat, inte full utfyllnad
+            r = RADIUS
+            qx, qy = abs(u - .5) - (.5 - r), abs(v - .5) - (.5 - r)
+            d = math.hypot(max(qx, 0.0), max(qy, 0.0)) + min(max(qx, qy), 0.0) - r
+            a = 1.0 - smooth(-1.1/S, 1.1/S, d)
+            if a <= 0: return col, 0.0
 
-    ang = (math.degrees(math.atan2(dy, dx)) + 90.0) % 360.0
-    ka0 = math.radians(-90.0)
-    ka1 = math.radians(ARC_END - 90.0)
-    if 0.0 <= ang <= ARC_END:
-        darc = abs(d - ring_r)
-    else:
-        darc = min(math.hypot(x - (cx + ring_r*math.cos(ka0)), y - (cy + ring_r*math.sin(ka0))),
-                   math.hypot(x - (cx + ring_r*math.cos(ka1)), y - (cy + ring_r*math.sin(ka1))))
-    ring = 1.0 - smooth(ring_w*0.5 - 1.1, ring_w*0.5 + 1.1, darc)
-    rc = lerp(ACC_HI, ACC, min(1.0, ang / ARC_END))
+    aa = 1.3 / S                                # kantmjukhet i normaliserade enheter
 
-    halo = (1.0 - smooth(0.0, ring_w*2.8, darc)) ** 1.6 * 0.26
-    col = tuple(min(255, col[i] + (rc[i] - col[i]) * halo) for i in range(3))
-    a = max(a, halo * 0.9)
+    # ringen: tyst, och öppen uppåt höger så den aldrig sluter sig
+    if not flat:
+        dx, dy = u - cx, v - cy
+        ang = (math.degrees(math.atan2(dy, dx)) + 90.0) % 360.0
+        rr = RING_R * scale
+        if GAP0 <= ang <= GAP1:
+            k0, k1 = math.radians(GAP0 - 90.0), math.radians(GAP1 - 90.0)
+            dring = min(math.hypot(dx - rr*math.cos(k0), dy - rr*math.sin(k0)),
+                        math.hypot(dx - rr*math.cos(k1), dy - rr*math.sin(k1)))
+        else:
+            dring = abs(math.hypot(dx, dy) - rr)
+        ring = 1.0 - smooth(RING_W*scale*0.5 - aa, RING_W*scale*0.5 + aa, dring)
+        if ring > 0:
+            col = lerp(col, WHITE, ring * 0.30)
 
-    kd = math.hypot(x - (cx + ring_r*math.cos(ka1)), y - (cy + ring_r*math.sin(ka1)))
-    knob = 1.0 - smooth(ring_w*0.70, ring_w*0.70 + 1.5, kd)
-
-    m = max(ring, knob)
-    if m > 0:
-        target = (245, 249, 255) if knob > ring else rc
-        col = lerp(col, target, m)
-        a = max(a, m)
+    # bocken
+    p = [(cx + (ax - .5) * scale, cy + (ay - .5) * scale) for ax, ay in CHK]
+    dchk = min(seg_dist(u, v, *p[0], *p[1]), seg_dist(u, v, *p[1], *p[2]))
+    chk = 1.0 - smooth(CHK_W*scale*0.5 - aa, CHK_W*scale*0.5 + aa, dchk)
+    if chk > 0:
+        col = lerp(col, WHITE, chk)
+        a = max(a, chk)
     return col, a
 
-def render(path, S, ring_ratio, width_ratio, ss=3, transparent=False):
-    ring_r, ring_w = S * ring_ratio, S * width_ratio
+def render(path, S, scale=1.0, rounded=True, flat=False, ss=3):
     buf = bytearray(S * S * 4)
     inv = 1.0 / (ss * ss)
     for y in range(S):
@@ -72,8 +98,8 @@ def render(path, S, ring_ratio, width_ratio, ss=3, transparent=False):
             r = g = b = a = 0.0
             for sy in range(ss):
                 for sx in range(ss):
-                    c, al = sample(x + (sx + .5) / ss, y + (sy + .5) / ss, S, ring_r, ring_w, transparent)
-                    r += c[0] * al; g += c[1] * al; b += c[2] * al; a += al
+                    c, al = sample(x + (sx + .5)/ss, y + (sy + .5)/ss, S, scale, rounded, flat)
+                    r += c[0]*al; g += c[1]*al; b += c[2]*al; a += al
             i = (y * S + x) * 4
             if a > 0:
                 buf[i]   = int(min(255, r / a))
@@ -84,17 +110,20 @@ def render(path, S, ring_ratio, width_ratio, ss=3, transparent=False):
     print('->', os.path.relpath(path))
 
 os.makedirs(OUT, exist_ok=True)
-render(os.path.join(OUT, 'icon-192.png'),        192, .315, .075)
-render(os.path.join(OUT, 'icon-512.png'),        512, .315, .075)
-render(os.path.join(OUT, 'apple-touch-icon.png'),180, .315, .075)
-render(os.path.join(OUT, 'maskable-512.png'),    512, .245, .058)
-render(os.path.join(OUT, 'badge.png'),            96, .34, .10, ss=3, transparent=True)
+# iOS maskar apple-touch-icon själv — bakar vi in hörnen får vi dubbla rundningar
+render(os.path.join(OUT, 'apple-touch-icon.png'), 180, rounded=False)
+render(os.path.join(OUT, 'icon-192.png'),         192)
+render(os.path.join(OUT, 'icon-512.png'),         512)
+# maskable: Android klipper själv, märket måste hålla sig inom 60 % säker zon
+render(os.path.join(OUT, 'maskable-512.png'),     512, scale=0.72, rounded=False)
+render(os.path.join(OUT, 'badge.png'),             96, scale=1.18, flat=True)
 
 open(os.path.join(OUT, 'favicon.svg'), 'w').write('''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-<stop offset="0" stop-color="#96BAFF"/><stop offset="1" stop-color="#4C8DFF"/></linearGradient></defs>
-<rect width="64" height="64" rx="14" fill="#0A0C12"/>
-<circle cx="32" cy="32" r="19" fill="none" stroke="url(#g)" stroke-width="4.6"
-        stroke-linecap="round" stroke-dasharray="100 119" transform="rotate(-90 32 32)"/>
-<circle cx="41.6" cy="48.5" r="3.4" fill="#F5F9FF"/></svg>''')
+<stop offset="0" stop-color="#609EFF"/><stop offset="1" stop-color="#1A58DD"/></linearGradient></defs>
+<rect width="64" height="64" rx="13.8" fill="url(#g)"/>
+<circle cx="32" cy="32" r="23" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.9"
+        stroke-linecap="round" stroke-dasharray="117 28" transform="rotate(-90 32 32)"/>
+<path d="M16.8 32.1 27.6 42.8 47.9 20.6" fill="none" stroke="#fff" stroke-width="6.2"
+      stroke-linecap="round" stroke-linejoin="round"/></svg>''')
 print('-> icons/favicon.svg')

@@ -5,7 +5,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.8';
+const VERSION = '1.1.0';
 const KEY = 'fokus.state.v1';
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -51,8 +51,9 @@ function fmtShort(ms){
 
 /* ── state ───────────────────────────────────────────────── */
 const defaults = () => ({
-  v: 1,
+  v: 2,
   tasks: [],
+  projects: [],
   sessions: [],
   timer: { status:'idle', catId:'struktur', taskId:null, durationMs: 25*60*1000, startedAt:0, elapsedBefore:0 },
   settings: { theme:'light', sound:true, haptics:true, keepAwake:false, notify:true, lastDurMin:25, hintSeen:false },
@@ -66,14 +67,41 @@ function load(){
     if (!raw) return defaults();
     const parsed = JSON.parse(raw);
     const base = defaults();
-    return {
+    return migrate({
       ...base, ...parsed,
       timer:    { ...base.timer,    ...(parsed.timer    || {}) },
       settings: { ...base.settings, ...(parsed.settings || {}) },
       tasks:    Array.isArray(parsed.tasks)    ? parsed.tasks    : [],
+      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-    };
+    });
   } catch (e){ console.warn('Kunde inte läsa sparad data', e); return defaults(); }
+}
+
+/* Gammal data ska aldrig behöva tänkas på längre upp. En uppgift från
+   v1 saknar varje Things-fält; här får den dem, en gång, vid inläsning.
+   Utan dag hamnar den i "När som helst" — ingenting tappas bort. */
+function migrate(s){
+  s.tasks.forEach(t => {
+    if (t.type === 'heading'){ t.title = t.title || ''; t.projectId = t.projectId || null; return; }
+    t.catId      = t.catId || null;
+    t.projectId  = t.projectId || null;
+    t.notes      = typeof t.notes === 'string' ? t.notes : '';
+    t.checklist  = Array.isArray(t.checklist) ? t.checklist : [];
+    t.tags       = Array.isArray(t.tags) ? t.tags : [];
+    t.when       = t.when === undefined ? null : t.when;
+    t.evening    = !!t.evening;
+    t.deadline   = t.deadline || null;
+    t.durationMs = typeof t.durationMs === 'number' ? t.durationMs : 25 * 60000;
+    t.done       = !!t.done;
+  });
+  s.projects.forEach(p => {
+    p.catId = p.catId || null; p.notes = p.notes || '';
+    p.when = p.when === undefined ? null : p.when;
+    p.deadline = p.deadline || null; p.done = !!p.done;
+  });
+  s.v = 2;
+  return s;
 }
 let saveTimer = null;
 function save(){
@@ -592,9 +620,16 @@ function renderFocus(){
   if (!running && !paused) maybeNudge();
 }
 
+/* Dagens plan styr remsan. En uppgift hör till området antingen direkt
+   eller via sitt projekt, och "någon gång" ska inte ligga och skräpa här. */
 function renderTaskStrip(){
   const host = $('#taskStrip');
-  const open = S.tasks.filter(t => t.catId === T.catId && !t.done);
+  const rank = t => (isDate(t.when) && t.when <= tkey()) ? 0
+                  : (isDate(t.deadline) && t.deadline <= keyAdd(3)) ? 1 : 2;
+  const open = S.tasks
+    .filter(t => !isHead(t) && !t.done && t.when !== 'someday' &&
+                 (t.catId === T.catId || projById(t.projectId)?.catId === T.catId))
+    .sort((a, b) => rank(a) - rank(b));
 
   host.innerHTML = open.length
     ? open.map(t => `<button type="button" class="tchip ${T.taskId === t.id ? 'is-on' : ''}"
@@ -652,20 +687,9 @@ function renderCorners(){
     if (el.dataset.id === T.catId) return;
     if (timeLocked()) return;
     buzz(10);
-    T.catId = el.dataset.id; T.taskId = null; taskCat = T.catId;
+    T.catId = el.dataset.id; T.taskId = null;
     save(); renderFocus();
   }));
-}
-
-function renderCats(host, onPick){
-  host.innerHTML = CATS.map(c => `
-    <button type="button" class="cat" data-id="${c.id}" style="--c:${c.c}" role="tab">
-      <span class="cat__dot"></span>
-      <svg class="ic"><use href="#${c.icon}"></use></svg>
-      <span class="cat__name">${c.short}</span>
-    </button>`).join('');
-  $$('.cat', host).forEach(el =>
-    el.addEventListener('click', () => { buzz(8); onPick(el.dataset.id); }));
 }
 
 /* ── gesten: tryck var som helst i bandet, ljuset flyter dit ─ */
@@ -945,89 +969,834 @@ function renderPresets(){
   }));
 }
 
-/* ── tasks view ──────────────────────────────────────────── */
-let taskCat = S.timer.catId;
-let newDurMin = 25;
+/* ══════════════════════════════════════════════════════════
+   LISTOR — Things-modellen ovanpå fokustimern
 
-function renderDurPick(){
-  $('#durPick').innerHTML = PRESETS.map(m =>
-    `<button type="button" class="chip ${m === newDurMin ? 'is-on' : ''}" data-min="${m}">${m < 60 ? m + ' min' : m/60 + ' h'}</button>`
-  ).join('');
-  $$('#durPick .chip').forEach(el => el.addEventListener('click', () => {
-    newDurMin = +el.dataset.min; buzz(6); renderDurPick();
-  }));
+   Fyra livsområden är Areas. Under dem ligger projekt, och i
+   dem uppgifter. Var en uppgift hamnar avgörs av två fält:
+     when      null | 'someday' | 'ÅÅÅÅ-MM-DD'   — när den ska göras
+     deadline  null | 'ÅÅÅÅ-MM-DD'               — när den MÅSTE vara klar
+   Listorna är vyer över de fälten, aldrig egna lagringsplatser.
+
+   S.tasks är EN platt array och ordningen i den ÄR sorteringen —
+   även rubriker ligger där (type:'heading'), så ett projekts
+   rubriker och uppgifter växlar av sig själva utan sorteringsfält.
+   ══════════════════════════════════════════════════════════ */
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+const DAY = 86400000;
+const LISTS = [
+  { id:'inbox',    name:'Inkorg',        icon:'i-inbox',    c:'#5B8DEF',
+    empty:['Inkorgen är tom', 'Allt du fångar utan att sortera hamnar här.'] },
+  { id:'today',    name:'Idag',          icon:'i-star',     c:'#F0A92E',
+    empty:['Inget inplanerat idag', 'Lägg till en uppgift eller flytta hit något från Kommande.'] },
+  { id:'upcoming', name:'Kommande',      icon:'i-calendar', c:'#E8734A',
+    empty:['Inget på kalendern', 'Sätt ett datum på en uppgift så dyker den upp här.'] },
+  { id:'anytime',  name:'När som helst', icon:'i-layers',   c:'#17B588',
+    empty:['Inget att ta tag i', 'Uppgifter utan datum samlas här.'] },
+  { id:'someday',  name:'Någon gång',    icon:'i-box',      c:'#B8923F',
+    empty:['Inga idéer parkerade', 'Lägg sådant du kanske vill göra här — det stör ingen annan lista.'] },
+  { id:'logbook',  name:'Loggbok',       icon:'i-book',     c:'#5DAE6B',
+    empty:['Inget avklarat ännu', 'Bockade uppgifter hamnar här.'] },
+];
+const listById = id => LISTS.find(l => l.id === id);
+
+/* ── datum ───────────────────────────────────────────────── */
+const keyOf  = d => `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+const today0 = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+const tkey   = () => keyOf(today0());
+const keyAdd = n => { const d = today0(); d.setDate(d.getDate() + n); return keyOf(d); };
+const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const keyDate = k => { const [y,m,d] = k.split('-').map(Number); return new Date(y, m-1, d); };
+const dayDiff = k => Math.round((keyDate(k) - today0()) / DAY);
+const WD = ['söndag','måndag','tisdag','onsdag','torsdag','fredag','lördag'];
+const MO = ['jan','feb','mars','apr','maj','juni','juli','aug','sep','okt','nov','dec'];
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function fmtDay(k){
+  const n = dayDiff(k);
+  if (n === 0)  return 'Idag';
+  if (n === 1)  return 'I morgon';
+  if (n === -1) return 'I går';
+  const d = keyDate(k);
+  if (n > 1 && n < 7) return cap(WD[d.getDay()]);
+  const y = d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `${d.getDate()} ${MO[d.getMonth()]}${y}`;
 }
-function renderTasks(){
-  const c = catById(taskCat);
-  document.documentElement.style.setProperty('--c-task', c.c);
-  $$('#catsTasks .cat').forEach(el => el.classList.toggle('is-on', el.dataset.id === taskCat));
-  $('#addInput').placeholder = `Ny uppgift i ${c.name}…`;
+function dueText(k){
+  const n = dayDiff(k);
+  if (n < 0)   return `${-n} ${-n === 1 ? 'dag' : 'dagar'} sen`;
+  if (n === 0) return 'Idag';
+  if (n === 1) return 'I morgon';
+  if (n <= 14) return `om ${n} dagar`;
+  return fmtDay(k);
+}
 
-  const open = S.tasks.filter(t => t.catId === taskCat && !t.done);
-  const done = S.tasks.filter(t => t.catId === taskCat && t.done);
-  const list = $('#taskList');
+/* ── modellen ────────────────────────────────────────────── */
+const isHead  = t => t.type === 'heading';
+const byId    = id => S.tasks.find(t => t.id === id) || null;
+const projById = id => S.projects.find(p => p.id === id) || null;
+const catOrNull = id => CATS.find(c => c.id === id) || null;
+const filed   = t => !!(t.catId || t.projectId);
+const openOf  = pid => S.tasks.filter(t => !isHead(t) && t.projectId === pid && !t.done).length;
+const allOf   = pid => S.tasks.filter(t => !isHead(t) && t.projectId === pid).length;
 
-  list.innerHTML = open.length ? open.map(t => taskRow(t, c)).join('')
-    : `<div class="empty"><b>Inget här ännu</b>Lägg till det du vill lägga tid på i ${c.name}.</div>`;
-  wireTasks(list);
+/* Uppgiftens färg: områdets, projektets områdes, annars inkorgsblått. */
+function rowColor(t){
+  const c = catOrNull(t.catId) || catOrNull(projById(t.projectId)?.catId);
+  return c ? c.c : '#5B8DEF';
+}
 
-  $('#doneWrap').innerHTML = done.length ? `
-    <div class="donewrap__head"><span>Klart (${done.length})</span><button type="button" id="clearDone">Rensa</button></div>
-    <div class="tasklist">${done.slice(0, 20).map(t => taskRow(t, c)).join('')}</div>` : '';
-  if (done.length){
-    wireTasks($('#doneWrap'));
-    $('#clearDone').addEventListener('click', () => {
-      S.tasks = S.tasks.filter(t => !(t.catId === taskCat && t.done));
-      save(); renderTasks(); renderCatDots(); toast('Klara uppgifter rensade');
-    });
+/* Hör posten hemma i listan? Enda stället som vet vad listorna betyder. */
+function inList(t, id){
+  const K = tkey();
+  if (t.done) return id === 'logbook';
+  const late = isDate(t.deadline) && t.deadline <= K;
+  switch (id){
+    case 'inbox':    return !filed(t);
+    // en deadline som gått ut tränger sig in i Idag, precis som i Things
+    case 'today':    return (isDate(t.when) && t.when <= K) || (late && t.when !== 'someday');
+    case 'upcoming': return isDate(t.when) && t.when > K;
+    case 'anytime':  return filed(t) && t.when !== 'someday' && !(isDate(t.when) && t.when > K);
+    case 'someday':  return t.when === 'someday';
+  }
+  return false;
+}
+function listItems(id){
+  if (id === 'logbook'){
+    return S.tasks.filter(t => !isHead(t) && t.done)
+      .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)).slice(0, 200);
+  }
+  const ps = S.projects.filter(p => !p.done && inList(p, id));
+  const ts = S.tasks.filter(t => !isHead(t) && !t.done && inList(t, id));
+  return [...ps.map(p => ({ ...p, _proj: true })), ...ts];
+}
+const listCount = id => id === 'logbook' ? 0 : listItems(id).length;
+
+/* ── navigeringsstack ────────────────────────────────────── */
+let stack = [{ k:'home' }];
+let openId = null;          // uppgiften som står uppslagen
+let findQ = '';
+const topv = () => stack[stack.length - 1];
+function pushView(v){ stack.push(v); openId = null; findQ = ''; renderLists(); scrollTop(); }
+function popView(){ if (stack.length > 1){ stack.pop(); openId = null; renderLists(); scrollTop(); } }
+function scrollTop(){ $('.stage').scrollTo({ top:0 }); }
+
+/* ── rendering ───────────────────────────────────────────── */
+function renderLists(){
+  const v = topv(), head = $('#listHead'), body = $('#listBody');
+  if (!head) return;
+  if      (v.k === 'home') renderHome(head, body);
+  else if (v.k === 'list') renderSmart(head, body, v.id);
+  else if (v.k === 'area') renderArea(head, body, v.id);
+  else if (v.k === 'proj') renderProject(head, body, v.id);
+  else { stack = [{ k:'home' }]; renderHome(head, body); }
+  // Ett öppet kort ritas om som alla andra rader, men dess fält är levande
+  // element. Utan den här raden tappade titeln och anteckningarna sina
+  // lyssnare så fort man satte ett datum — och vidare skrivning försvann.
+  if (openId){
+    const row = $(`.todo[data-id="${openId}"]`), t = byId(openId);
+    if (row && t){ wireCard(row, t); row.querySelectorAll('textarea').forEach(autoGrow); }
+    else openId = null;
   }
 }
-function taskRow(t, c){
-  const active = T.taskId === t.id;
-  const focused = t.focusedMs ? `<b>${fmtShort(t.focusedMs)} fokuserat</b>` : '';
-  return `<div class="task ${t.done ? 'is-done' : ''} ${active ? 'is-active' : ''}" data-id="${t.id}" style="--c:${c.c}">
-    <button type="button" class="task__check" data-act="toggle" aria-label="Markera klar"><svg class="ic"><use href="#i-check"></use></svg></button>
-    <div class="task__main">
-      <div class="task__title">${escapeHtml(t.title)}</div>
-      <div class="task__meta"><span>${fmtDur(t.durationMs)}</span>${focused}</div>
-    </div>
-    ${t.done ? '' : '<button type="button" class="task__play" data-act="start" aria-label="Starta"><svg class="ic ic--sm"><use href="#i-play"></use></svg></button>'}
-    <button type="button" class="task__del" data-act="del" aria-label="Ta bort"><svg class="ic ic--sm"><use href="#i-trash"></use></svg></button>
+
+function headHtml(o){
+  const back = stack.length > 1
+    ? `<button class="lh__back" data-act="back" type="button" aria-label="Tillbaka"><svg class="ic"><use href="#i-back"></use></svg></button>` : '';
+  const ic = o.pie != null
+    ? pieHtml(o.pie, 30)
+    : `<span class="lh__ic"><svg class="ic"><use href="#${o.icon}"></use></svg></span>`;
+  const n = o.count ? `<span class="lh__c">${o.count}</span>` : '';
+  return `<div class="lhead" style="--lc:${o.c}">${back}${ic}<h1 class="lh__t">${escapeHtml(o.name)}</h1>${n}</div>`
+       + (o.sub ? `<p class="lh__sub">${escapeHtml(o.sub)}</p>` : '');
+}
+function pieHtml(frac, size = 19){
+  const r = 7.4, C2 = 2 * Math.PI * r;
+  if (frac >= 1) return `<svg class="pie" style="width:${size}px;height:${size}px" viewBox="0 0 20 20"><circle class="pie__done" cx="10" cy="10" r="9"/><path d="M6 10.2 8.9 13 14 7.6" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="rotate(90 10 10)"/></svg>`;
+  return `<svg class="pie" style="width:${size}px;height:${size}px" viewBox="0 0 20 20">
+    <circle class="pie__bg" cx="10" cy="10" r="${r}"/>
+    <circle class="pie__fg" cx="10" cy="10" r="${r}" stroke-dasharray="${(C2*frac).toFixed(2)} ${C2.toFixed(2)}"/></svg>`;
+}
+
+/* ── hemmet: listorna och områdena ───────────────────────── */
+function renderHome(head, body){
+  head.innerHTML = `<div class="lhead"><h1 class="lh__t">Listor</h1></div>
+    <div class="find">
+      <svg class="ic"><use href="#i-search"></use></svg>
+      <input id="findInput" type="search" placeholder="Sök uppgifter och projekt" value="${escapeHtml(findQ)}"
+             autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+      ${findQ ? `<button class="find__x" data-act="findclear" type="button" aria-label="Rensa"><svg class="ic"><use href="#i-x"></use></svg></button>` : ''}
+    </div>`;
+  const inp = $('#findInput');
+  inp.addEventListener('input', () => { findQ = inp.value; renderHomeBody(body); });
+  renderHomeBody(body);
+}
+function renderHomeBody(body){
+  if (findQ.trim()){ renderHits(body); return; }
+  const lists = LISTS.map(l => {
+    const n = listCount(l.id);
+    return `<button class="grow" data-act="golist" data-id="${l.id}" type="button" style="--lc:${l.c}">
+      <span class="grow__ic"><svg class="ic"><use href="#${l.icon}"></use></svg></span>
+      <span class="grow__n">${l.name}</span>
+      ${n ? `<span class="grow__c">${n}</span>` : ''}
+      <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>`;
+  }).join('');
+
+  const areas = CATS.map(c => {
+    const projs = S.projects.filter(p => p.catId === c.id && !p.done);
+    const n = S.tasks.filter(t => !isHead(t) && t.catId === c.id && !t.done && t.when !== 'someday').length;
+    const rows = projs.map(p => {
+      const tot = allOf(p.id), dn = tot - openOf(p.id);
+      return `<button class="grow grow--sub" data-act="goproj" data-id="${p.id}" type="button" style="--lc:${c.c}">
+        ${pieHtml(tot ? dn / tot : 0)}
+        <span class="grow__n">${escapeHtml(p.title)}</span>
+        ${tot ? `<span class="grow__c">${dn}/${tot}</span>` : ''}
+        <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>`;
+    }).join('');
+    return `<button class="grow" data-act="goarea" data-id="${c.id}" type="button" style="--lc:${c.c}">
+      <span class="grow__ic"><svg class="ic"><use href="#${c.icon}"></use></svg></span>
+      <span class="grow__n">${c.name}</span>
+      ${n ? `<span class="grow__c">${n}</span>` : ''}
+      <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>` + rows;
+  }).join('');
+
+  body.innerHTML = `<div class="group">${lists}</div>
+    <p class="slabel">Livsområden</p>
+    <div class="group">${areas}</div>`;
+}
+
+/* ── sökträffar ──────────────────────────────────────────── */
+function renderHits(body){
+  const q = findQ.trim().toLowerCase();
+  const hitT = S.tasks.filter(t => !isHead(t) &&
+    (t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q)
+     || (t.tags || []).some(x => x.toLowerCase().includes(q)))).slice(0, 40);
+  const hitP = S.projects.filter(p => p.title.toLowerCase().includes(q));
+  if (!hitT.length && !hitP.length){
+    body.innerHTML = `<div class="empty"><b>Ingen träff</b>Inget som heter "${escapeHtml(findQ.trim())}".</div>`;
+    return;
+  }
+  const ph = hitP.map(p => {
+    const c = catOrNull(p.catId), tot = allOf(p.id), dn = tot - openOf(p.id);
+    return `<button class="grow" data-act="goproj" data-id="${p.id}" type="button" style="--lc:${c ? c.c : '#5B8DEF'}">
+      ${pieHtml(tot ? dn / tot : 0)}<span class="grow__n">${escapeHtml(p.title)}</span>
+      <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>`;
+  }).join('');
+  body.innerHTML =
+    (ph ? `<p class="slabel">Projekt</p><div class="group">${ph}</div>` : '') +
+    (hitT.length ? `<p class="slabel">Uppgifter</p><div class="group hit">${hitT.map(todoRow).join('')}</div>` : '');
+}
+
+/* ── en smart lista ──────────────────────────────────────── */
+function renderSmart(head, body, id){
+  const l = listById(id); if (!l){ popView(); return; }
+  const items = listItems(id);
+  head.innerHTML = headHtml({ name:l.name, icon:l.icon, c:l.c, count: id === 'logbook' ? 0 : items.length });
+
+  if (!items.length){ body.innerHTML = emptyHtml(l.empty); return; }
+
+  if (id === 'upcoming' || id === 'logbook'){ body.innerHTML = dayGroups(items, id, l.c); return; }
+
+  if (id === 'today'){
+    const dayT = items.filter(t => !t.evening), eve = items.filter(t => t.evening);
+    body.innerHTML =
+      (dayT.length ? `<div class="group">${dayT.map(itemRow).join('')}</div>` : '') +
+      (eve.length ? `<p class="slabel"><svg class="ic"><use href="#i-moon"></use></svg>I kväll</p>
+         <div class="group">${eve.map(itemRow).join('')}</div>` : '');
+    return;
+  }
+  body.innerHTML = `<div class="group">${items.map(itemRow).join('')}</div>`;
+}
+function dayGroups(items, id, c){
+  const key = t => id === 'logbook' ? dayKey(t.completedAt || t.createdAt || Date.now()) : t.when;
+  const map = new Map();
+  items.forEach(t => { const k = key(t); if (!map.has(k)) map.set(k, []); map.get(k).push(t); });
+  const keys = [...map.keys()].sort();
+  if (id === 'logbook') keys.reverse();
+  return keys.map(k => {
+    const d = keyDate(k), date = `${d.getDate()} ${MO[d.getMonth()]}`, wd = cap(WD[d.getDay()]);
+    const main = fmtDay(k);
+    // underrubriken fyller i det rubriken inte redan sagt
+    const sub = main === date ? wd : main === wd ? date : `${wd} · ${date}`;
+    return `<div class="dgroup ${k === tkey() ? 'is-today' : ''}" data-day="${k}">
+      <div class="dgroup__h"><span class="dgroup__d">${main}</span><span class="dgroup__w">${sub}</span></div>
+      <div class="group">${map.get(k).map(itemRow).join('')}</div></div>`;
+  }).join('');
+}
+const emptyHtml = ([t, d]) => `<div class="empty"><b>${t}</b>${d}</div>`;
+const itemRow = x => x._proj ? projRow(x) : todoRow(x);
+
+/* ── ett område ──────────────────────────────────────────── */
+function renderArea(head, body, id){
+  const c = catOrNull(id); if (!c){ popView(); return; }
+  const projs = S.projects.filter(p => p.catId === id && !p.done);
+  const loose = S.tasks.filter(t => !isHead(t) && t.catId === id && !t.projectId && !t.done && t.when !== 'someday');
+  const some  = S.tasks.filter(t => !isHead(t) && t.catId === id && !t.projectId && !t.done && t.when === 'someday');
+  head.innerHTML = headHtml({ name:c.name, icon:c.icon, c:c.c, count:loose.length + projs.length });
+
+  const ph = projs.map(p => {
+    const tot = allOf(p.id), dn = tot - openOf(p.id);
+    return `<button class="grow" data-act="goproj" data-id="${p.id}" type="button" style="--lc:${c.c}">
+      ${pieHtml(tot ? dn / tot : 0)}<span class="grow__n">${escapeHtml(p.title)}</span>
+      ${tot ? `<span class="grow__c">${dn}/${tot}</span>` : ''}
+      <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>`;
+  }).join('');
+
+  body.innerHTML =
+    `<div class="group">${ph}<button class="grow" data-act="newproj" type="button" style="--lc:${c.c}">
+       <span class="grow__ic"><svg class="ic"><use href="#i-plus"></use></svg></span>
+       <span class="grow__n" style="color:var(--lc)">Nytt projekt</span></button></div>` +
+    (loose.length ? `<p class="slabel">Uppgifter</p><div class="group">${loose.map(todoRow).join('')}</div>`
+      : !projs.length ? emptyHtml(['Tomt här', `Lägg det du vill lägga tid på i ${c.name}.`]) : '') +
+    (some.length ? `<p class="slabel"><svg class="ic"><use href="#i-box"></use></svg>Någon gång</p>
+       <div class="group">${some.map(todoRow).join('')}</div>` : '');
+}
+
+/* ── ett projekt ─────────────────────────────────────────── */
+function renderProject(head, body, id){
+  const p = projById(id); if (!p){ popView(); return; }
+  const c = catOrNull(p.catId);
+  const col = c ? c.c : '#5B8DEF';
+  const items = S.tasks.filter(t => t.projectId === id && (isHead(t) || !t.done));
+  const tot = allOf(id), dn = tot - openOf(id);
+  head.innerHTML = headHtml({ name:p.title, pie: tot ? dn / tot : 0, c:col,
+    sub: [c ? c.name : null, tot ? `${dn} av ${tot} klara` : null].filter(Boolean).join(' · ') });
+
+  const done = S.tasks.filter(t => !isHead(t) && t.projectId === id && t.done);
+  const rows = items.length
+    ? items.map(t => isHead(t) ? headingRow(t, col) : todoRow(t)).join('')
+    : '';
+  body.innerHTML = `<div class="group" id="projRows" style="--lc:${col}">${rows}</div>` +
+    (!items.length ? emptyHtml(['Inga steg ännu', 'Tryck på plusset — dra det åt vänster för en rubrik.']) : '') +
+    (done.length ? `<p class="slabel">Klart (${done.length})</p>
+       <div class="group">${done.slice(0, 30).map(todoRow).join('')}</div>` : '') +
+    `<div class="pbtns" style="--lc:${col};margin:16px 2px 0">
+       <button class="pb" data-act="projwhen" type="button"><svg class="ic"><use href="#i-calendar"></use></svg>${p.when ? whenLabel(p) : 'Planera projektet'}</button>
+       <button class="pb pb--del" data-act="projdel" type="button"><svg class="ic"><use href="#i-trash"></use></svg>Ta bort projektet</button>
+     </div>`;
+}
+function headingRow(h, col){
+  return `<div class="phead" data-head="${h.id}" style="--lc:${col}">
+    <input class="phead__t" value="${escapeHtml(h.title)}" placeholder="Rubrik" maxlength="60" data-act="headedit">
+    <button class="phead__x" data-act="headdel" type="button" aria-label="Ta bort rubrik"><svg class="ic"><use href="#i-x"></use></svg></button></div>`;
+}
+
+/* ── raderna ─────────────────────────────────────────────── */
+function projRow(p){
+  const c = catOrNull(p.catId), col = c ? c.c : '#5B8DEF';
+  const tot = allOf(p.id), dn = tot - openOf(p.id);
+  return `<button class="grow" data-act="goproj" data-id="${p.id}" type="button" style="--lc:${col}">
+    ${pieHtml(tot ? dn / tot : 0)}<span class="grow__n">${escapeHtml(p.title)}</span>
+    ${tot ? `<span class="grow__c">${dn}/${tot}</span>` : ''}
+    <svg class="ic grow__chev"><use href="#i-chev"></use></svg></button>`;
+}
+function todoRow(t){
+  const open = openId === t.id;
+  return `<div class="todo ${t.done ? 'is-done' : ''} ${open ? 'is-open' : ''}" data-id="${t.id}" style="--lc:${rowColor(t)}">
+    <button class="tbox" data-act="done" type="button" aria-label="${t.done ? 'Ångra' : 'Markera klar'}"><svg class="ic"><use href="#i-check"></use></svg></button>
+    <div class="tmain" data-act="open">${open ? titleEdit(t) : `<div class="tt">${escapeHtml(t.title)}</div>${metaHtml(t)}`}</div>
+    ${t.done ? '' : `<button class="tgo" data-act="focus" type="button" aria-label="Fokusera på den här"><svg class="ic"><use href="#i-play"></use></svg></button>`}
+    <div class="tpanel"><div class="tpanel__in"><div class="tpanel__pad">${open ? cardHtml(t) : ''}</div></div></div>
   </div>`;
 }
-function wireTasks(root){
-  $$('.task', root).forEach(row => {
-    const id = row.dataset.id;
-    $$('[data-act]', row).forEach(btn => btn.addEventListener('click', ev => {
-      ev.stopPropagation();
-      const t = S.tasks.find(x => x.id === id); if (!t) return;
-      const act = btn.dataset.act;
-      if (act === 'toggle'){
-        t.done = !t.done; t.completedAt = t.done ? Date.now() : null;
-        buzz(t.done ? [10, 40, 16] : 8);
-        if (t.done && T.taskId === t.id) T.taskId = null;
-        save(); renderTasks(); renderCatDots(); renderFocus();
-        if (t.done) toast('Snyggt jobbat ✓');
-      }
-      if (act === 'del'){
-        S.tasks = S.tasks.filter(x => x.id !== id);
-        if (T.taskId === id) T.taskId = null;
-        buzz(12); save(); renderTasks(); renderCatDots(); renderFocus();
-      }
-      if (act === 'start'){
-        if (timeLocked()) return;
-        T.catId = t.catId; T.taskId = t.id;
-        T.durationMs = t.durationMs; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
-        save(); go('focus'); renderFocus();
-        setTimeout(startTimer, 260);
-      }
-    }));
+const titleEdit = t => `<textarea class="tedit" rows="1" maxlength="140" placeholder="Vad ska du göra?" data-act="title">${escapeHtml(t.title)}</textarea>`;
+
+function metaHtml(t){
+  const m = [];
+  const v = topv();
+  const p = projById(t.projectId);
+  if (p && !(v.k === 'proj' && v.id === p.id))
+    m.push(`<span class="mchip mchip--proj"><svg class="ic"><use href="#i-chev"></use></svg>${escapeHtml(p.title)}</span>`);
+  else if (!p && t.catId && v.k !== 'area'){
+    const c = catOrNull(t.catId);
+    if (c) m.push(`<span class="mchip mchip--proj"><svg class="ic"><use href="#${c.icon}"></use></svg>${escapeHtml(c.short)}</span>`);
+  }
+  // datumet visas bara där det bär information
+  if (isDate(t.when) && !t.done && v.id !== 'today' && v.id !== 'upcoming')
+    m.push(`<span class="mchip"><svg class="ic"><use href="#i-calendar"></use></svg>${fmtDay(t.when)}</span>`);
+  if (t.when === 'someday' && v.id !== 'someday')
+    m.push(`<span class="mchip"><svg class="ic"><use href="#i-box"></use></svg>Någon gång</span>`);
+  if (t.evening && v.id !== 'today')
+    m.push(`<span class="mchip"><svg class="ic"><use href="#i-moon"></use></svg>I kväll</span>`);
+  if (isDate(t.deadline) && !t.done)
+    m.push(`<span class="mchip mchip--due ${dayDiff(t.deadline) > 2 ? 'is-soft' : ''}"><svg class="ic"><use href="#i-flag"></use></svg>${dueText(t.deadline)}</span>`);
+  const ck = t.checklist || [];
+  if (ck.length) m.push(`<span class="mchip"><svg class="ic"><use href="#i-check"></use></svg>${ck.filter(x => x.done).length}/${ck.length}</span>`);
+  if ((t.notes || '').trim()) m.push(`<span class="mchip"><svg class="ic"><use href="#i-notes"></use></svg></span>`);
+  if (t.focusedMs) m.push(`<span class="mchip mchip--focus"><svg class="ic"><use href="#i-clock"></use></svg>${fmtShort(t.focusedMs)}</span>`);
+  (t.tags || []).forEach(x => m.push(`<span class="mchip mchip--tag">${escapeHtml(x)}</span>`));
+  return m.length ? `<div class="tmeta">${m.join('')}</div>` : '';
+}
+
+/* ── kortet ──────────────────────────────────────────────── */
+function whenLabel(t){
+  if (t.when === 'someday') return 'Någon gång';
+  if (isDate(t.when)) return t.evening && t.when === tkey() ? 'I kväll' : fmtDay(t.when);
+  return 'När';
+}
+function cardHtml(t){
+  const ck = t.checklist || [];
+  const p = projById(t.projectId), c = catOrNull(t.catId);
+  const where = p ? p.title : c ? c.short : 'Lägg i…';
+  return `<textarea class="tnotes" rows="1" placeholder="Anteckningar" data-act="notes">${escapeHtml(t.notes || '')}</textarea>
+    <div class="cklist">${ck.map(ckHtml).join('')}
+      <button class="ckadd" data-act="ckadd" type="button"><svg class="ic"><use href="#i-plus"></use></svg>Lägg till steg</button>
+    </div>
+    <div class="pbtns">
+      <button class="pb ${t.when ? 'is-set' : ''}" data-act="when" type="button"><svg class="ic"><use href="#i-calendar"></use></svg>${whenLabel(t)}</button>
+      <button class="pb pb--due ${t.deadline ? 'is-set' : ''}" data-act="due" type="button"><svg class="ic"><use href="#i-flag"></use></svg>${isDate(t.deadline) ? fmtDay(t.deadline) : 'Deadline'}</button>
+      <button class="pb ${(t.tags || []).length ? 'is-set' : ''}" data-act="tags" type="button"><svg class="ic"><use href="#i-tag"></use></svg>${(t.tags || []).length ? t.tags.join(', ') : 'Taggar'}</button>
+      <button class="pb ${filed(t) ? 'is-set' : ''}" data-act="move" type="button"><svg class="ic"><use href="#i-layers"></use></svg>${escapeHtml(where)}</button>
+      <button class="pb" data-act="dur" type="button"><svg class="ic"><use href="#i-clock"></use></svg>${fmtDur(t.durationMs)} per pass</button>
+      <button class="pb pb--del" data-act="del" type="button" aria-label="Ta bort"><svg class="ic"><use href="#i-trash"></use></svg></button>
+    </div>`;
+}
+const ckHtml = x => `<div class="ck ${x.done ? 'is-done' : ''}" data-ck="${x.id}">
+  <button class="ckbox" data-act="cktoggle" type="button" aria-label="Markera steg"><svg class="ic"><use href="#i-check"></use></svg></button>
+  <input class="ck__t" value="${escapeHtml(x.title)}" placeholder="Steg" maxlength="100" data-act="cktitle" enterkeyhint="next">
+  <button class="ck__x" data-act="ckdel" type="button" aria-label="Ta bort steg"><svg class="ic"><use href="#i-x"></use></svg></button></div>`;
+
+/* ── öppna och stänga ett kort ───────────────────────────── */
+function autoGrow(el){ el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+function openTodo(id){
+  if (openId === id) return;
+  closeTodo();
+  const t = byId(id); if (!t || t.done) return;
+  const row = $(`.todo[data-id="${id}"]`); if (!row) return;
+  openId = id;
+  row.querySelector('.tmain').innerHTML = titleEdit(t);
+  row.querySelector('.tpanel__pad').innerHTML = cardHtml(t);
+  wireCard(row, t, true);
+  requestAnimationFrame(() => {
+    row.classList.add('is-open');
+    row.querySelectorAll('textarea').forEach(autoGrow);
+    setTimeout(() => row.scrollIntoView({ block:'nearest', behavior:'smooth' }), 240);
+  });
+  buzz(6);
+}
+function closeTodo(){
+  if (!openId) return;
+  const id = openId, row = $(`.todo[data-id="${id}"]`);
+  openId = null;
+  const t = byId(id);
+  // en uppgift utan namn är en ångrad uppgift, inte en tom rad
+  if (t && !t.title.trim()){ S.tasks = S.tasks.filter(x => x.id !== id); save(); renderLists(); return; }
+  if (!row || !t) return;
+  row.classList.remove('is-open');
+  row.querySelector('.tmain').innerHTML = `<div class="tt">${escapeHtml(t.title)}</div>${metaHtml(t)}`;
+  setTimeout(() => {
+    const pad = row.querySelector('.tpanel__pad');
+    if (pad && !row.classList.contains('is-open')) pad.innerHTML = '';
+  }, 340);
+}
+
+function wireCard(row, t, focus){
+  const q = s => row.querySelector(s);
+  const title = q('.tedit');
+  if (title){
+    title.addEventListener('input', () => { autoGrow(title); t.title = title.value; save(); });
+    title.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); title.blur(); closeTodo(); } });
+    if (focus) setTimeout(() => { title.focus(); title.setSelectionRange(title.value.length, title.value.length); }, 60);
+  }
+  const notes = q('.tnotes');
+  if (notes) notes.addEventListener('input', () => { autoGrow(notes); t.notes = notes.value; save(); });
+
+  row.querySelectorAll('.ck').forEach(el => {
+    const ck = (t.checklist || []).find(x => x.id === el.dataset.ck); if (!ck) return;
+    el.querySelector('.ck__t').addEventListener('input', e => { ck.title = e.target.value; save(); });
+    el.querySelector('.ck__t').addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault(); addCheck(t, row, el);
+    });
   });
 }
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function addCheck(t, row, after){
+  t.checklist = t.checklist || [];
+  const item = { id:uid(), title:'', done:false };
+  const at = after ? t.checklist.findIndex(x => x.id === after.dataset.ck) + 1 : t.checklist.length;
+  t.checklist.splice(at, 0, item);
+  save();
+  const host = row.querySelector('.cklist');
+  const el = document.createElement('div');
+  el.innerHTML = ckHtml(item);
+  const node = el.firstElementChild;
+  host.insertBefore(node, after ? after.nextSibling : host.querySelector('.ckadd'));
+  wireCard(row, t);
+  node.querySelector('.ck__t').focus();
+  buzz(5);
+}
+
+/* ── alla klick i listvyn på ett ställe ──────────────────── */
+/* Delegerat och kopplat EN gång. Vyn ritas om vid varje bock och
+   varje byte — en lyssnare per omritning hade blivit hundratals. */
+function onListClick(ev){
+  // utanför kortet = klart med kortet
+  if (openId && !ev.target.closest('.todo.is-open')) closeTodo();
+  const btn = ev.target.closest('[data-act]'); if (!btn) return;
+  const act = btn.dataset.act;
+  const row = btn.closest('.todo');
+  const t = row ? byId(row.dataset.id) : null;
+
+  switch (act){
+    case 'back':      buzz(8); closeTodo(); popView(); return;
+    case 'findclear': findQ = ''; renderLists(); return;
+    case 'golist':    buzz(8); pushView({ k:'list', id:btn.dataset.id }); return;
+    case 'goarea':    buzz(8); pushView({ k:'area', id:btn.dataset.id }); return;
+    case 'goproj':    buzz(8); pushView({ k:'proj', id:btn.dataset.id }); return;
+    case 'newproj':   newProject(topv().id); return;
+    case 'projwhen':  openSheet('when', { proj: projById(topv().id) }); return;
+    case 'projdel':   delProject(topv().id); return;
+    case 'headdel':   delHeading(btn.closest('.phead').dataset.head); return;
+  }
+  if (!t) return;
+
+  switch (act){
+    case 'done':  toggleDone(t, row); break;
+    case 'open':  if (t.done) return; openId === t.id ? closeTodo() : openTodo(t.id); break;
+    case 'focus': focusOn(t); break;
+    case 'when':  openSheet('when', { task:t }); break;
+    case 'due':   openSheet('due',  { task:t }); break;
+    case 'tags':  openSheet('tags', { task:t }); break;
+    case 'move':  openSheet('move', { task:t }); break;
+    case 'dur':   openSheet('dur',  { task:t }); break;
+    case 'del':
+      openId = null;
+      S.tasks = S.tasks.filter(x => x.id !== t.id);
+      if (T.taskId === t.id) T.taskId = null;
+      buzz(12); save(); renderLists(); renderFocus(); toast('Uppgiften är borta');
+      break;
+    case 'ckadd':     addCheck(t, row, null); break;
+    case 'cktoggle': {
+      const el = btn.closest('.ck');
+      const ck = (t.checklist || []).find(x => x.id === el.dataset.ck); if (!ck) return;
+      ck.done = !ck.done; el.classList.toggle('is-done', ck.done);
+      buzz(ck.done ? 8 : 5); save();
+      break;
+    }
+    case 'ckdel': {
+      const el = btn.closest('.ck');
+      t.checklist = (t.checklist || []).filter(x => x.id !== el.dataset.ck);
+      el.remove(); buzz(8); save();
+      break;
+    }
+  }
+}
+
+/* Bocken: raden kvitterar, glider undan och listan sluter sig. */
+function toggleDone(t, row){
+  const now = !t.done;
+  t.done = now; t.completedAt = now ? Date.now() : null;
+  if (now && T.taskId === t.id) T.taskId = null;
+  buzz(now ? [10, 40, 16] : 8);
+  save();
+  if (now && row){
+    openId = null;
+    row.classList.add('is-done');
+    sndCheck();
+    setTimeout(() => { row.classList.add('is-leaving');
+      setTimeout(() => { renderLists(); renderFocus(); renderCatDots(); renderHeader(); }, 300); }, 240);
+  } else { renderLists(); renderFocus(); renderCatDots(); }
+}
+/* Ett litet kvitto — samma familj som detentljudet, inte en pipsignal. */
+function sndCheck(){
+  if (!S.settings.sound) return;
+  tone(1046.5, 0, .09, .07, 'triangle');
+  tone(1568, .045, .14, .05, 'sine');
+}
+
+/* ── uppgiften möter timern ──────────────────────────────── */
+function focusOn(t){
+  if (timeLocked()) return;
+  const area = t.catId || projById(t.projectId)?.catId;
+  // Utan livsområde finns ingen ärlig plats att bokföra tiden på.
+  if (!area){ openSheet('move', { task:t, then:'focus' }); return; }
+  T.catId = area;
+  T.taskId = t.id; T.durationMs = t.durationMs;
+  T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
+  closeTodo(); buzz(10); save(); go('focus'); renderFocus();
+}
+
+/* ── projekt och rubriker ────────────────────────────────── */
+function newProject(catId){ openSheet('project', { catId }); }
+function createProject(catId, title){
+  const p = { id:uid(), catId, title:title.trim(), notes:'', when:null, deadline:null,
+              done:false, completedAt:null, createdAt:Date.now() };
+  S.projects.push(p); buzz(12); save(); pushView({ k:'proj', id:p.id });
+}
+function delProject(id){
+  const p = projById(id); if (!p) return;
+  const n = allOf(id);
+  if (!confirm(n ? `Ta bort "${p.title}" och ${n} uppgifter?` : `Ta bort "${p.title}"?`)) return;
+  S.tasks = S.tasks.filter(t => t.projectId !== id);
+  S.projects = S.projects.filter(x => x.id !== id);
+  buzz(14); save(); popView(); toast('Projektet är borta');
+}
+function delHeading(id){
+  S.tasks = S.tasks.filter(t => t.id !== id);
+  buzz(10); save(); renderLists();
+}
+
+/* ── magiska plusset ─────────────────────────────────────── */
+/* Ett tryck lägger en uppgift sist i listan. Lyfter man knappen och
+   drar hamnar uppgiften där man släpper — och åt vänster i ett
+   projekt blir det en rubrik i stället. */
+function initMagic(){
+  const btn = $('#magicPlus'), line = $('#insertLine'), hint = $('#magicHint');
+  let pid = null, x0 = 0, y0 = 0, moved = false, slot = null, heading = false;
+
+  const rowsNow = () => [...$$('#listBody .todo, #listBody .phead')];
+
+  function aim(e){
+    const inProj = topv().k === 'proj';
+    heading = inProj && e.clientX < 76;
+    const rows = rowsNow();
+    if (heading){
+      const r = rows.length ? rows[Math.min(rows.length - 1, nearest(rows, e.clientY))] : null;
+      place(r, true);
+      slot = { idx: nearest(rows, e.clientY), rows };
+      hint.textContent = 'Ny rubrik';
+      return;
+    }
+    if (!rows.length){ line.hidden = true; slot = { idx:0, rows }; hint.textContent = 'Ny uppgift'; return; }
+    const i = nearest(rows, e.clientY);
+    slot = { idx:i, rows };
+    place(rows[Math.min(i, rows.length - 1)], false, i >= rows.length);
+    const day = (rows[Math.min(i, rows.length - 1)].closest('.dgroup') || {}).dataset?.day;
+    hint.textContent = day ? fmtDay(day) : 'Ny uppgift';
+  }
+  const nearest = (rows, y) => rows.filter(r => { const b = r.getBoundingClientRect(); return y > b.top + b.height / 2; }).length;
+
+  function place(row, isHeading, below){
+    if (!row){ line.hidden = true; return; }
+    const b = row.getBoundingClientRect();
+    line.hidden = false;
+    line.classList.toggle('is-heading', !!isHeading);
+    line.style.top = `${(below ? b.bottom : b.top) - 1}px`;
+    line.style.left = `${b.left + 12}px`;
+    line.style.width = `${b.width - 24}px`;
+  }
+
+  btn.addEventListener('pointerdown', e => {
+    if (pid !== null) return;
+    pid = e.pointerId; moved = false; slot = null; heading = false;
+    x0 = e.clientX; y0 = e.clientY;
+    try { btn.setPointerCapture(pid); } catch(err){}
+    buzz(6);
+  });
+  btn.addEventListener('pointermove', e => {
+    if (e.pointerId !== pid) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    if (!moved && Math.hypot(dx, dy) < 7) return;
+    if (!moved){ moved = true; btn.classList.add('is-lift'); closeTodo(); renderLists(); }
+    btn.style.transform = `translate(${dx}px, ${dy}px) scale(1.06)`;
+    aim(e);
+  });
+  const drop = e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    btn.classList.remove('is-lift'); btn.style.transform = '';
+    line.hidden = true; hint.textContent = '';
+    try { btn.releasePointerCapture(e.pointerId); } catch(err){}
+    if (!moved){ createAt(null, false); return; }
+    createAt(slot, heading);
+  };
+  ['pointerup','pointercancel','lostpointercapture'].forEach(ev => btn.addEventListener(ev, drop));
+}
+
+/* Var i S.tasks hamnar den nya posten? Positionen i arrayen ÄR ordningen. */
+function globalIndex(slot){
+  if (!slot || !slot.rows.length) return S.tasks.length;
+  const rows = slot.rows, i = slot.idx;
+  if (i >= rows.length){
+    const last = byId(rows[rows.length - 1].dataset.id || rows[rows.length - 1].dataset.head);
+    return last ? S.tasks.indexOf(last) + 1 : S.tasks.length;
+  }
+  const ref = byId(rows[i].dataset.id || rows[i].dataset.head);
+  return ref ? S.tasks.indexOf(ref) : S.tasks.length;
+}
+function createAt(slot, heading){
+  closeTodo();
+  const v = topv();
+  if (v.k === 'home'){ pushView({ k:'list', id:'inbox' }); setTimeout(() => createAt(null, false), 60); return; }
+  const at = globalIndex(slot);
+
+  if (heading && v.k === 'proj'){
+    S.tasks.splice(at, 0, { id:uid(), type:'heading', projectId:v.id, title:'' });
+    buzz(12); save(); renderLists();
+    setTimeout(() => $$('#listBody .phead__t').find(el => !el.value)?.focus(), 60);
+    return;
+  }
+
+  const d = { catId:null, projectId:null, when:null, evening:false };
+  if (v.k === 'list'){
+    if (v.id === 'today')    d.when = tkey();
+    if (v.id === 'someday')  d.when = 'someday';
+    if (v.id === 'upcoming') d.when = keyAdd(1);
+  }
+  if (v.k === 'area') d.catId = v.id;
+  if (v.k === 'proj'){ const p = projById(v.id); d.projectId = v.id; d.catId = p ? p.catId : null; }
+  // släppte man på en dag i Kommande ärver uppgiften den dagen
+  if (slot && slot.rows.length){
+    const r = slot.rows[Math.min(slot.idx, slot.rows.length - 1)];
+    const day = r.closest('.dgroup')?.dataset.day;
+    if (day && v.id === 'upcoming') d.when = day;
+    if (v.id === 'today') d.evening = !!r.closest('.group')?.previousElementSibling?.querySelector('[href="#i-moon"]');
+  }
+
+  const t = newTask(d);
+  S.tasks.splice(at, 0, t);
+  buzz(12); save();
+  openId = t.id;
+  renderLists();
+  const row = $(`.todo[data-id="${t.id}"]`);
+  if (row){ row.classList.add('is-open', 'todo--new'); wireCard(row, t, true);
+            row.querySelectorAll('textarea').forEach(autoGrow); }
+}
+
+/* Enda stället som vet hur en uppgift ser ut när den föds. */
+function newTask(over){
+  return { id:uid(), catId:null, projectId:null, title:'', notes:'', checklist:[], tags:[],
+           when:null, evening:false, deadline:null,
+           durationMs: (S.settings.lastDurMin || 25) * 60000,
+           done:false, completedAt:null, createdAt:Date.now(), focusedMs:0, sessions:0, ...over };
+}
+
+
+/* ── valarken: när, deadline, taggar, plats, tid ─────────── */
+const PICKERS = {
+  when(body, ctx){
+    const o = ctx.task || ctx.proj; if (!o) return;
+    $('#sheetTitle').textContent = 'När ska den göras?';
+    const K = tkey(), T1 = keyAdd(1);
+    const on = c => c ? 'is-on' : '';
+    body.innerHTML = `<div class="pickgrid">
+      <button class="pick ${on(o.when === K && !o.evening)}" data-w="today" style="--pc:#F0A92E" type="button"><svg class="ic"><use href="#i-star"></use></svg>Idag</button>
+      <button class="pick ${on(o.when === K && o.evening)}" data-w="evening" style="--pc:#7C83F7" type="button"><svg class="ic"><use href="#i-moon"></use></svg>I kväll</button>
+      <button class="pick ${on(o.when === T1)}" data-w="tomorrow" style="--pc:#E8734A" type="button"><svg class="ic"><use href="#i-calendar"></use></svg>I morgon</button>
+      <button class="pick ${on(o.when === 'someday')}" data-w="someday" style="--pc:#B8923F" type="button"><svg class="ic"><use href="#i-box"></use></svg>Någon gång</button>
+      <button class="pick pick--wide ${on(!o.when)}" data-w="clear" style="--pc:#17B588" type="button"><svg class="ic"><use href="#i-layers"></use></svg>När som helst — ingen dag</button>
+    </div>
+    <p class="fieldlabel" style="margin-top:16px">Eller en bestämd dag</p>
+    <div class="pickdate"><input type="date" id="pickDate" value="${isDate(o.when) ? o.when : ''}"></div>`;
+
+    const set = (when, evening) => {
+      o.when = when; o.evening = !!evening;
+      buzz(10); save(); closeSheet(); renderLists(); renderFocus(); renderCatDots();
+    };
+    body.querySelectorAll('.pick').forEach(b => b.addEventListener('click', () => {
+      const w = b.dataset.w;
+      if (w === 'today')    return set(tkey(), false);
+      if (w === 'evening')  return set(tkey(), true);
+      if (w === 'tomorrow') return set(keyAdd(1), false);
+      if (w === 'someday')  return set('someday', false);
+      set(null, false);
+    }));
+    $('#pickDate').addEventListener('change', e => { if (e.target.value) set(e.target.value, false); });
+  },
+
+  due(body, ctx){
+    const o = ctx.task || ctx.proj; if (!o) return;
+    $('#sheetTitle').textContent = 'Deadline';
+    body.innerHTML = `<p class="muted small">En deadline är när uppgiften måste vara klar — inte när du tänkt göra den. Den som går ut tränger sig in i Idag.</p>
+    <div class="pickgrid" style="margin-top:12px">
+      <button class="pick" data-d="0" style="--pc:#F2445A" type="button"><svg class="ic"><use href="#i-flag"></use></svg>Idag</button>
+      <button class="pick" data-d="1" style="--pc:#E8734A" type="button"><svg class="ic"><use href="#i-flag"></use></svg>I morgon</button>
+      <button class="pick" data-d="7" style="--pc:#F0A92E" type="button"><svg class="ic"><use href="#i-flag"></use></svg>Om en vecka</button>
+      <button class="pick ${o.deadline ? '' : 'is-on'}" data-d="x" style="--pc:#17B588" type="button"><svg class="ic"><use href="#i-x"></use></svg>Ingen</button>
+    </div>
+    <p class="fieldlabel" style="margin-top:16px">Eller ett datum</p>
+    <div class="pickdate"><input type="date" id="pickDue" value="${isDate(o.deadline) ? o.deadline : ''}"></div>`;
+    const set = v => { o.deadline = v; buzz(10); save(); closeSheet(); renderLists(); };
+    body.querySelectorAll('.pick').forEach(b => b.addEventListener('click', () =>
+      set(b.dataset.d === 'x' ? null : keyAdd(+b.dataset.d))));
+    $('#pickDue').addEventListener('change', e => set(e.target.value || null));
+  },
+
+  tags(body, ctx){
+    const t = ctx.task; if (!t) return;
+    $('#sheetTitle').textContent = 'Taggar';
+    const all = [...new Set(S.tasks.flatMap(x => x.tags || []))].sort();
+    const draw = () => {
+      body.innerHTML = `<div class="tagwrap">${all.length
+        ? all.map(x => `<button class="tagc ${t.tags.includes(x) ? 'is-on' : ''}" data-t="${escapeHtml(x)}" type="button">${escapeHtml(x)}</button>`).join('')
+        : '<p class="muted small">Inga taggar ännu. Skriv en nedan.</p>'}</div>
+      <form class="taginput" id="tagForm" autocomplete="off">
+        <input id="tagNew" type="text" placeholder="Ny tagg" maxlength="24" enterkeyhint="done">
+        <button class="sheetadd__go" type="submit" aria-label="Lägg till"><svg class="ic"><use href="#i-plus"></use></svg></button>
+      </form>`;
+      body.querySelectorAll('.tagc').forEach(b => b.addEventListener('click', () => {
+        const v = b.dataset.t;
+        t.tags = t.tags.includes(v) ? t.tags.filter(x => x !== v) : [...t.tags, v];
+        buzz(7); save(); draw(); renderLists();
+      }));
+      $('#tagForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const v = $('#tagNew').value.trim(); if (!v) return;
+        if (!all.includes(v)) all.push(v), all.sort();
+        if (!t.tags.includes(v)) t.tags.push(v);
+        buzz(10); save(); draw(); renderLists();
+      });
+    };
+    draw();
+  },
+
+  move(body, ctx){
+    const t = ctx.task; if (!t) return;
+    $('#sheetTitle').textContent = ctx.then === 'focus' ? 'Var ska tiden bokas?' : 'Var hör den hemma?';
+    const rows = [`<button class="pick pick--wide ${!filed(t) ? 'is-on' : ''}" data-m="inbox" style="--pc:#5B8DEF" type="button"><svg class="ic"><use href="#i-inbox"></use></svg>Inkorgen</button>`];
+    CATS.forEach(c => {
+      rows.push(`<button class="pick pick--wide ${t.catId === c.id && !t.projectId ? 'is-on' : ''}" data-m="cat:${c.id}" style="--pc:${c.c}" type="button"><svg class="ic"><use href="#${c.icon}"></use></svg>${c.name}</button>`);
+      S.projects.filter(p => p.catId === c.id && !p.done).forEach(p =>
+        rows.push(`<button class="pick pick--wide ${t.projectId === p.id ? 'is-on' : ''}" data-m="proj:${p.id}" style="--pc:${c.c};padding-left:34px" type="button"><svg class="ic"><use href="#i-chev"></use></svg>${escapeHtml(p.title)}</button>`));
+    });
+    if (ctx.then === 'focus') rows.shift();      // inkorgen är inget svar här
+    body.innerHTML = `<div class="pickgrid">${rows.join('')}</div>`
+      + (ctx.then === 'focus' ? '<p class="muted small" style="margin-top:12px">Passet bokförs på området du väljer. Du kan flytta uppgiften igen när som helst.</p>' : '');
+    body.querySelectorAll('.pick').forEach(b => b.addEventListener('click', () => {
+      const [k, v] = b.dataset.m.split(':');
+      t.catId = k === 'cat' ? v : k === 'proj' ? (projById(v)?.catId || null) : null;
+      t.projectId = k === 'proj' ? v : null;
+      buzz(10); save(); closeSheet(); renderLists(); renderFocus(); renderCatDots();
+      if (ctx.then === 'focus') setTimeout(() => focusOn(t), 280);
+    }));
+  },
+
+  dur(body, ctx){
+    const t = ctx.task; if (!t) return;
+    $('#sheetTitle').textContent = 'Tid per pass';
+    body.innerHTML = `<p class="muted small">Så lång blir timern när du startar den här uppgiften.</p>
+      <div class="durpick" style="display:flex;flex-wrap:wrap;gap:7px;margin-top:12px">${PRESETS.map(m =>
+        `<button class="chip ${t.durationMs === m * 60000 ? 'is-on' : ''}" data-min="${m}" type="button">${m < 60 ? m + ' min' : m / 60 + ' h'}</button>`).join('')}</div>`;
+    body.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+      t.durationMs = +b.dataset.min * 60000;
+      if (T.taskId === t.id && T.status === 'idle'){ T.durationMs = t.durationMs; paintDial(true); }
+      buzz(9); save(); closeSheet(); renderLists();
+    }));
+  },
+
+  project(body, ctx){
+    $('#sheetTitle').textContent = 'Nytt projekt';
+    const c = catOrNull(ctx.catId);
+    body.innerHTML = `<form class="sheetadd" id="projForm" autocomplete="off">
+        <input class="sheetadd__input" id="projName" type="text" maxlength="60" enterkeyhint="done" placeholder="Vad ska bli gjort?">
+        <button class="sheetadd__go" type="submit" aria-label="Skapa"><svg class="ic"><use href="#i-plus"></use></svg></button>
+      </form>
+      <p class="muted small">Ett projekt är flera steg mot ett mål${c ? ` — det här hamnar i ${c.name}` : ''}.</p>`;
+    $('#projForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const v = $('#projName').value.trim(); if (!v) return;
+      closeSheet(); createProject(ctx.catId, v);
+    });
+    setTimeout(() => $('#projName')?.focus(), 340);
+  },
+};
+
+/* ── prickar på hörnplattorna ────────────────────────────── */
 function renderCatDots(){
-  $$('#cats .corner, #catsTasks .cat').forEach(el =>
-    el.classList.toggle('has-tasks', S.tasks.some(t => t.catId === el.dataset.id && !t.done)));
+  $$('#cats .corner').forEach(el => el.classList.toggle('has-tasks',
+    S.tasks.some(t => !isHead(t) && t.catId === el.dataset.id && !t.done && t.when !== 'someday')));
 }
 
 /* ── stats ───────────────────────────────────────────────── */
@@ -1256,9 +2025,10 @@ function initData(){
 }
 
 /* ── sheet (task picker) ─────────────────────────────────── */
-function openSheet(mode = 'task'){
+function openSheet(mode = 'task', ctx = {}){
   const body = $('#sheetBody');
-  if (mode === 'time'){
+  if (PICKERS[mode]){ PICKERS[mode](body, ctx); }
+  else if (mode === 'time'){
     $('#sheetTitle').textContent = 'Egen tid';
     body.innerHTML = `
       <div class="steppers" id="steppers">
@@ -1285,8 +2055,8 @@ function openSheet(mode = 'task'){
       e.preventDefault();
       const title = $('#sheetAddInput').value.trim();
       if (!title) return;
-      const t = { id:uid(), catId:T.catId, title, durationMs:T.durationMs,
-                  done:false, createdAt:Date.now(), focusedMs:0, sessions:0 };
+      // fångad på fokusvyn = planerad för idag, annars syns den inte där
+      const t = newTask({ catId:T.catId, title, durationMs:T.durationMs, when:tkey() });
       S.tasks.unshift(t);
       T.taskId = t.id;
       buzz(12); save(); closeSheet(); renderAll();
@@ -1329,20 +2099,22 @@ function go(view){
   $$('.view').forEach(v => v.classList.toggle('is-active', v.id === 'view-' + view));
   $$('#tabbar .tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === view));
   paintPill();
-  if (view === 'tasks')    { renderDurPick(); renderTasks(); }
+  if (view === 'tasks')    renderLists();
   if (view === 'stats')    renderStats();
   if (view === 'settings') renderSettings();
   $('.stage').scrollTo({ top:0, behavior:'smooth' });
 }
 function renderAll(){ renderHeader(); renderFocus(); renderCatDots();
   if (document.body.dataset.view === 'stats') renderStats();
-  if (document.body.dataset.view === 'tasks') renderTasks(); }
+  if (document.body.dataset.view === 'tasks') renderLists(); }
 
 /* ── url shortcuts & keyboard ────────────────────────────── */
 function initShortcuts(){
   const q = new URLSearchParams(location.search);
   const view = q.get('view');
   if (view && ['focus','tasks','stats','settings'].includes(view)) go(view);
+  const list = q.get('list');
+  if (list && listById(list)){ stack = [{ k:'home' }, { k:'list', id:list }]; go('tasks'); }
   const quick = parseInt(q.get('quick'), 10);
   if (quick > 0 && quick <= 240 && T.status === 'idle'){
     T.durationMs = quick * 60000; T.elapsedBefore = 0; T.status = 'idle'; T.startedAt = 0;
@@ -1355,14 +2127,26 @@ function initKeys(){
   addEventListener('keydown', e => {
     if (e.target.matches('input, textarea')) return;
     if (e.code === 'Space'){ e.preventDefault(); T.status === 'running' ? pauseTimer() : startTimer(); }
-    if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet();
+    if (e.key === 'Escape'){
+      if (!$('#sheet').hidden) closeSheet();
+      else if (openId) closeTodo();
+      else if (stack.length > 1 && document.body.dataset.view === 'tasks') popView();
+    }
   });
 }
 
 /* ── boot ────────────────────────────────────────────────── */
 function init(){
   applyTheme(); applyAccent(); buildTicks(); renderPresets(); initDial(); renderCorners();
-  renderCats($('#catsTasks'), id => { taskCat = id; renderTasks(); });
+  initMagic();
+  // delegerat en gång: vyn ritas om hela tiden, lyssnarna ska inte följa med
+  $('#listBody').addEventListener('click', onListClick);
+  $('#listHead').addEventListener('click', onListClick);
+  $('#listBody').addEventListener('input', e => {
+    const el = e.target.closest('.phead__t'); if (!el) return;
+    const h = byId(el.closest('.phead').dataset.head);
+    if (h){ h.title = el.value; save(); }
+  });
 
   $('#btnPlay').addEventListener('click',  () => T.status === 'running' ? pauseTimer() : startTimer());
   $('#btnReset').addEventListener('click', resetTimer);
@@ -1379,14 +2163,6 @@ function init(){
   $('#streakPill').addEventListener('click', () => go('stats'));
   $('#todayPill').addEventListener('click', () => go('stats'));
   $$('#tabbar .tab').forEach(t => t.addEventListener('click', () => { buzz(8); go(t.dataset.tab); }));
-
-  $('#addForm').addEventListener('submit', e => {
-    e.preventDefault();
-    const title = $('#addInput').value.trim(); if (!title) return;
-    S.tasks.unshift({ id:uid(), catId:taskCat, title, durationMs:newDurMin*60000,
-                      done:false, createdAt:Date.now(), focusedMs:0, sessions:0 });
-    $('#addInput').value = ''; buzz(10); save(); renderTasks(); renderCatDots();
-  });
 
   initInstall(); initData(); initShortcuts(); initKeys();
 

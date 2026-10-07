@@ -1,7 +1,10 @@
-# Fokus — fyra livsområden
+# Fokus — uppgifter och fokustid
 
-En premium fokustimer byggd som PWA. Fyra livsområden i varje hörn, uppgifter per
-område, timer som överlever att appen stängs, och allt sparat lokalt på enheten.
+En PWA som är två appar i en: en uppgiftshanterare byggd på Things modell, och en
+fokustimer som överlever att appen stängs. De möts i raden — varje uppgift kan
+startas som ett pass, och tiden bokförs på uppgiftens livsområde.
+
+Allt sparas lokalt på enheten. Inget konto, ingen server.
 
 ## Kör lokalt
 
@@ -23,6 +26,46 @@ Ingen build, inga beroenden. Bara statiska filer.
 | `manifest.webmanifest` | PWA-manifest för installation på hemskärmen |
 | `server.mjs` | Minimal statisk server för lokal utveckling |
 | `tools/make_icons.py` | Genererar app-ikonerna (ren stdlib, inga beroenden) |
+
+## Uppgiftsmodellen
+
+Lånad rakt av från Things, för att den är genomtänkt:
+
+```
+Livsområde (fast: Socialt, Struktur, Pengar/Karriär, Utseende/Hälsa)
+  └── Projekt
+        ├── Rubrik
+        └── Uppgift
+              ├── Anteckningar
+              ├── Checklista
+              └── Taggar
+```
+
+Var en uppgift hamnar avgörs av **två fält, inte av vilken lista den ligger i**:
+
+| Fält | Värden | Betydelse |
+|---|---|---|
+| `when` | `null` · `'someday'` · `'ÅÅÅÅ-MM-DD'` | när den ska göras |
+| `deadline` | `null` · `'ÅÅÅÅ-MM-DD'` | när den måste vara klar |
+
+Listorna är vyer över de fälten och äger ingenting:
+
+| Lista | Innehåller |
+|---|---|
+| Inkorg | varken livsområde eller projekt |
+| Idag | `when` ≤ idag, plus deadlines som gått ut |
+| Kommande | `when` > idag, grupperat per dag |
+| När som helst | sorterad någonstans, men utan dag |
+| Någon gång | `when === 'someday'` |
+| Loggbok | avklarade, grupperade per dag |
+
+`S.tasks` är **en platt array och ordningen i den _är_ sorteringen**. Rubriker
+ligger i samma array (`type:'heading'`), så ett projekts rubriker och uppgifter
+växlar av sig själva utan något ordningsfält. Det magiska plusset räknar om
+släpppunkten till ett index i den arrayen.
+
+Gammal data migreras en gång vid inläsning (`migrate()` i `app.js`) — en uppgift
+från v1 får varje nytt fält och hamnar i **När som helst**.
 
 ## Så fungerar timern
 
@@ -49,7 +92,8 @@ tid — därför gäller nivå 3 där. Tiden blir alltid rätt.
 
 ## Lagring
 
-Allt ligger i `localStorage` under nyckeln `fokus.state.v1`, och appen begär
+Allt ligger i `localStorage` under nyckeln `fokus.state.v1` (nyckeln behöll sitt
+namn vid v2 — `state.v` i objektet är versionen som styr migreringen), och appen begär
 `navigator.storage.persist()` så att data inte vräks ut vid utrymmesbrist.
 Inget konto, ingen server, inget lämnar enheten. Export/import av en JSON-backup
 finns under **Mer → Dina data**.

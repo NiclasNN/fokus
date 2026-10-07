@@ -1,7 +1,7 @@
 {
-  "name": "Fokus — fyra livsområden",
+  "name": "Fokus — uppgifter och fokustid",
   "short_name": "Fokus",
-  "description": "Premium fokustimer för Socialt, Struktur, Pengar/Karriär och Utseende/Hälsa. Fungerar offline och sparar allt lokalt på din enhet.",
+  "description": "Uppgifter, projekt och livsområden i en premium fokustimer. Fungerar offline och sparar allt lokalt på din enhet.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -39,6 +39,11 @@
     }
   ],
   "shortcuts": [
+    {
+      "name": "Idag",
+      "short_name": "Idag",
+      "url": "./?view=tasks&list=today"
+    },
     {
       "name": "Starta 25 min",
       "short_name": "25 min",
