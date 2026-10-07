@@ -11,3 +11,10 @@
 
 # VAPID-nycklar: den privata får aldrig lämna maskinen
 push/vapid.json
+
+# Xcode: byggartefakter och lokalt användartillstånd
+ios/build/
+ios/build-device/
+ios/Fokus.xcodeproj/
+ios/DerivedData/
+**/xcuserdata/

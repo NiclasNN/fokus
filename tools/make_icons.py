@@ -117,6 +117,11 @@ render(os.path.join(OUT, 'icon-512.png'),         512)
 # maskable: Android klipper själv, märket måste hålla sig inom 60 % säker zon
 render(os.path.join(OUT, 'maskable-512.png'),     512, scale=0.72, rounded=False)
 render(os.path.join(OUT, 'badge.png'),             96, scale=1.18, flat=True)
+# iOS-appens ikon: App Store vill ha 1024 utan hörn — systemet maskar själv
+IOS = os.path.join(os.path.dirname(__file__), '..', 'ios', 'Fokus', 'Resources',
+                   'Assets.xcassets', 'AppIcon.appiconset')
+if os.path.isdir(IOS):
+    render(os.path.join(IOS, 'icon-1024.png'), 1024, rounded=False, ss=2)
 
 open(os.path.join(OUT, 'favicon.svg'), 'w').write('''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
