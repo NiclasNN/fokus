@@ -6,6 +6,12 @@ struct FokusApp: App {
     @StateObject private var store = Store()
     @Environment(\.scenePhase) private var phase
 
+    init() {
+        #if DEBUG
+        SortEval.runIfRequested()
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

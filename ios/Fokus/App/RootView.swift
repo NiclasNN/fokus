@@ -5,7 +5,7 @@ struct RootView: View {
     @ObservedObject private var launcher = FocusLauncher.shared
     @State private var tab = Tab.lists
 
-    enum Tab: Hashable { case focus, lists, stats, more }
+    enum Tab: Hashable { case focus, lists, talk, stats, more }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -15,6 +15,9 @@ struct RootView: View {
             ListsHomeView()
                 .tabItem { Label("Listor", systemImage: "list.bullet") }
                 .tag(Tab.lists)
+            TalkView(active: tab == .talk) { tab = .lists }
+                .tabItem { Label("Tala in", systemImage: "mic.fill") }
+                .tag(Tab.talk)
             StatsView()
                 .tabItem { Label("Statistik", systemImage: "chart.bar") }
                 .tag(Tab.stats)

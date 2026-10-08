@@ -122,7 +122,7 @@ struct ListsHomeView: View {
         .scrollContentBackground(.hidden)
         .background(Palette.bg)
         .navigationTitle("Listor")
-        .searchable(text: $query, prompt: "Sök uppgifter och projekt")
+        .searchable(text: $query, prompt: "Sök uppgifter")
     }
 
     @ViewBuilder private var searchResults: some View {

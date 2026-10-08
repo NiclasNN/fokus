@@ -125,6 +125,17 @@ final class Store: ObservableObject {
     func todayCount(in area: AreaID) -> Int { actionable(in: area).filter(isToday).count }
     func areaBadge(_ area: AreaID) -> Int { actionable(in: area).count }
 
+    /// Användarens egna uppgifter som exempel för sorteringen, nyast först.
+    /// Det är så "Tala in" lär sig: rättar man ett område i granskningen och
+    /// sparar, blir uppgiften ett exempel på hur man själv sorterar.
+    var sortExamples: [SortExample] {
+        s.todos
+            .filter { $0.areaID != nil && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+            .sorted { $0.createdAt > $1.createdAt }
+            .prefix(24)
+            .compactMap { t in t.areaID.map { SortExample(title: t.title, area: $0) } }
+    }
+
     var allTags: [String] { Array(Set(s.todos.flatMap(\.tags))).sorted() }
 
     func search(_ q: String) -> [Todo] {
