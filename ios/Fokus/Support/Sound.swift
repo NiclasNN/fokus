@@ -88,4 +88,38 @@ final class Sound {
     func check() { play([(1046.5, 0.14, 0.09), (1568, 0.10, 0.16)]) }
     func start() { play([(523.25, 0.22, 0.28), (783.99, 0.16, 0.34)]) }
     func done()  { play([(880, 0.22, 0.6), (1108.73, 0.18, 0.75), (1318.51, 0.15, 0.9)]) }
+
+    // MARK: - Slutklockan
+
+    private var chime: AVAudioPlayer?
+    private var chimeEnds: DispatchWorkItem?
+
+    /// Passet är slut och appen är framme. Samma mjuka klocka som larmet,
+    /// och den ska HÖRAS: .playback ignorerar ljudlöst-knappen precis som
+    /// Klocka-appens timer, och musik tonas ner medan klockan spelar.
+    /// Förut var det ett ackord på en kvarts sekund i .ambient — det
+    /// tystades helt av ljudlöst-läget.
+    func finish() {
+        guard enabled,
+              let url = Bundle.main.url(forResource: "fokus-klar", withExtension: "caf"),
+              let player = try? AVAudioPlayer(contentsOf: url) else { done(); return }
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [.duckOthers])
+        try? session.setActive(true)
+        player.volume = 1
+        player.prepareToPlay()
+        player.play()
+        chime = player
+
+        chimeEnds?.cancel()
+        let restore = DispatchWorkItem { [weak self] in
+            self?.chime = nil
+            // tillbaka: tickljuden ska åter följa ljudlöst-knappen
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            try? session.setActive(true)
+        }
+        chimeEnds = restore
+        DispatchQueue.main.asyncAfter(deadline: .now() + player.duration + 0.3, execute: restore)
+    }
 }

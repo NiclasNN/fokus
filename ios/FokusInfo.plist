@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Bara nycklar som Xcodes genererade Info.plist inte känner till.
+  Allt annat sätts via INFOPLIST_KEY_* i project.yml; Xcode slår ihop dem.
+  NSAlarmKitUsageDescription måste stå här — som INFOPLIST_KEY_ hoppades
+  den tyst över, och utan den vägrar AlarmKit att fråga om behörighet.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Fokus ringer när ditt pass är slut — även när telefonen är låst eller står på ljudlöst.</string>
+</dict>
+</plist>

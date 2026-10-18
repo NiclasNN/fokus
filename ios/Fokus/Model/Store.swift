@@ -5,12 +5,12 @@ import UserNotifications
 @MainActor
 final class Store: ObservableObject {
     @Published var s = AppState()
-    /// Driver nedräkningen. Bara den här ändras en gång per sekund — resten
-    /// av modellen står still, så listorna ritas inte om i onödan.
-    @Published private(set) var now = Date()
 
     private var saveTask: Task<Void, Never>?
-    private var ticker: AnyCancellable?
+    /// Ringer när passet tar slut. Nedräkningen på skärmen ritar sig själv
+    /// (`Ticking`) — modellen ändras inte varje sekund, så resten av appen
+    /// ritas inte om medan ett pass går.
+    private var endTimer: Timer?
 
     // MARK: - Liv
 
@@ -300,7 +300,8 @@ final class Store: ObservableObject {
         if s.timer.partner { s.settings.partnerMinutes = max(1, s.timer.durationSeconds / 60) }
         startTicking()
         Sound.shared.start(); Haptics.tap()
-        scheduleAlarm()
+        // Första passet: fråga om larm nu, när det är begripligt varför.
+        Task { await PassAlarm.prepare() }
         showOnLockScreen()
         save()
     }
@@ -322,7 +323,7 @@ final class Store: ObservableObject {
         s.timer.elapsedBefore += Date().timeIntervalSince(st)
         s.timer.status = .paused
         s.timer.startedAt = nil
-        stopTicking(); cancelAlarm(); Haptics.tap()
+        stopTicking(); disarmAlarm(); Haptics.tap()
         FokusLive.pause(remaining: s.timer.remaining)
         save()
     }
@@ -330,7 +331,7 @@ final class Store: ObservableObject {
         s.timer.status = .idle
         s.timer.elapsedBefore = 0
         s.timer.startedAt = nil
-        stopTicking(); cancelAlarm(); Haptics.tap()
+        stopTicking(); disarmAlarm(); Haptics.tap()
         FokusLive.end()
         save()
     }
@@ -347,16 +348,23 @@ final class Store: ObservableObject {
     /// inte samma sak som att vara klar.
     @Published var finishedTodoID: String?
 
-    func completeTimer(at date: Date = Date()) {
+    /// `chime` bara när appen var framme när tiden tog slut. Tog passet slut
+    /// i bakgrunden har larmet redan ringt — då ska appen inte ringa en gång
+    /// till när man öppnar den.
+    func completeTimer(at date: Date = Date(), chime: Bool = true) {
         let todoID = s.timer.todoID
         log(seconds: s.timer.durationSeconds, at: date)
         if let id = todoID, let t = todo(id), !t.done { finishedTodoID = id }
         s.timer.status = .idle
         s.timer.elapsedBefore = 0
         s.timer.startedAt = nil
-        stopTicking(); cancelAlarm()
+        stopTicking(); disarmAlarm()
         FokusLive.end()
-        Sound.shared.done(); Haptics.success()
+        if chime {
+            Sound.shared.finish()
+            Haptics.success()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { Haptics.success() }
+        }
         save()
     }
     private func log(seconds: Int, at date: Date) {
@@ -373,30 +381,46 @@ final class Store: ObservableObject {
     /// Ett pass som har tid på sig äger tiden, uppgiften och livsområdet.
     var timeLocked: Bool { s.timer.isLive }
 
-    private func startTicking() {
-        ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
-            .sink { [weak self] d in
-                guard let self else { return }
-                self.now = d
-                if self.s.timer.status == .running, self.s.timer.remaining <= 0 {
-                    let ended = (self.s.timer.startedAt ?? d)
-                        .addingTimeInterval(TimeInterval(self.s.timer.durationSeconds) - self.s.timer.elapsedBefore)
-                    self.completeTimer(at: min(ended, d))
-                }
-            }
+    /// När passet tar slut enligt klockan.
+    private var endDate: Date {
+        (s.timer.startedAt ?? Date())
+            .addingTimeInterval(TimeInterval(s.timer.durationSeconds) - s.timer.elapsedBefore)
     }
-    private func stopTicking() { ticker?.cancel(); ticker = nil; now = Date() }
+
+    private func startTicking() {
+        endTimer?.invalidate()
+        guard s.timer.status == .running else { return }
+        let t = Timer(timeInterval: max(0.05, s.timer.remaining), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endIfDue() }
+        }
+        t.tolerance = 0.05
+        RunLoop.main.add(t, forMode: .common)
+        endTimer = t
+    }
+    private func stopTicking() { endTimer?.invalidate(); endTimer = nil }
+
+    private func endIfDue() {
+        guard s.timer.status == .running else { return }
+        // I bakgrunden är det systemlarmet som ringer. Avslutade appen passet
+        // här skulle den stänga av larmet innan någon hört det.
+        guard UIApplication.shared.applicationState != .background else { return }
+        guard s.timer.remaining <= 0 else { startTicking(); return }
+        completeTimer(at: min(endDate, Date()))
+    }
+
+    /// I bakgrunden finns inget att rita och larmet äger slutet. Appen
+    /// räknar om mot klockan när den kommer fram igen.
+    func enterBackground() { stopTicking() }
 
     /// Appen kan ha varit helt stängd. Räkna om mot klockan, inte mot minnet.
     func resumeIfNeeded() {
         guard s.timer.status == .running else { return }
         if s.timer.remaining <= 0 {
-            let ended = (s.timer.startedAt ?? Date())
-                .addingTimeInterval(TimeInterval(s.timer.durationSeconds) - s.timer.elapsedBefore)
-            completeTimer(at: min(ended, Date()))
+            completeTimer(at: min(endDate, Date()), chime: false)
         } else {
             startTicking()
-            scheduleAlarm()
+            // Appen är framme: då spelar den själv. Ett systemlarm skulle ringa i kapp.
+            disarmAlarm()
             // Appen kan ha startats om — adoptera aktiviteten i stället för
             // att lägga en andra på låsskärmen.
             FokusLive.adopt()
@@ -406,28 +430,17 @@ final class Store: ObservableObject {
 
     // MARK: - Larmet
 
-    /// Native löser det webbappen aldrig kunde: ett lokalt larm väcker en
-    /// släckt telefon utan push-server och utan att appen behöver leva.
-    func scheduleAlarm() {
-        cancelAlarm()
+    /// Läggs när appen går i bakgrunden. Med appen framme spelar appen själv
+    /// slutklockan — ett systemlarm samtidigt hade ringt i kapp med den.
+    func armAlarm() async {
         guard s.settings.notify, s.timer.status == .running else { return }
-        let left = s.timer.remaining
-        guard left > 0.5 else { return }
-        let c = UNMutableNotificationContent()
-        c.title = "Passet är klart 🎉"
-        c.body = "\(sessionTitle) — \(Sv.duration(seconds: s.timer.durationSeconds)) avklarat"
-        c.sound = .default
-        c.interruptionLevel = .timeSensitive
-        let req = UNNotificationRequest(
-            identifier: "fokus-timer",
-            content: c,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: left, repeats: false))
-        UNUserNotificationCenter.current().add(req)
+        let end = Date().addingTimeInterval(s.timer.remaining)
+        await PassAlarm.arm(at: end,
+                            title: s.timer.partner ? "Tiden med \(s.settings.partnerName) är slut" : "Passet är klart",
+                            body: "\(sessionTitle) — \(Sv.duration(seconds: s.timer.durationSeconds))",
+                            tint: activeTint)
     }
-    func cancelAlarm() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["fokus-timer"])
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["fokus-timer"])
-    }
+    func disarmAlarm() { Task { await PassAlarm.disarm() } }
 
     // MARK: - Statistik
 

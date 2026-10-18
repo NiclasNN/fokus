@@ -22,6 +22,7 @@ struct DialView: View {
     private let elastic = 0.55
 
     private var live: Bool { store.s.timer.isLive }
+    private var running: Bool { store.s.timer.status == .running }
     private var tint: Color { store.activeTint }
 
     private var laps: Int { max(0, (current - 1) / 60) }
@@ -47,9 +48,13 @@ struct DialView: View {
                 ticks(size)
                 groove(size)
                 lapRings(size)
-                arc(size)
-                knob(size)
-                face
+                Ticking(running: store.s.timer.status == .running) {
+                    ZStack {
+                        arc(size)
+                        knob(size)
+                        face
+                    }
+                }
             }
             .frame(width: size, height: size)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -133,7 +138,10 @@ struct DialView: View {
             .rotationEffect(.degrees(-90))
             .padding(s * 0.115)
             .shadow(color: tint.opacity(dragging ? 0.5 : 0.3), radius: s * 0.03)
-            .animation(dragging ? nil : .spring(response: 0.45, dampingFraction: 0.8), value: fraction)
+            // Fjädern när passet startar, pausas eller nollas — inte för varje
+            // tick: en fjäder var fjärdedels sekund ritar ratten oavbrutet.
+            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: store.s.timer.status)
+            .animation(dragging || running ? nil : .spring(response: 0.45, dampingFraction: 0.8), value: fraction)
     }
 
     private func knob(_ s: CGFloat) -> some View {
@@ -148,7 +156,8 @@ struct DialView: View {
             .shadow(color: .black.opacity(0.25), radius: s * 0.012, y: s * 0.006)
             .offset(y: -r)
             .rotationEffect(.degrees(headAngle))
-            .animation(dragging ? .interactiveSpring() : .spring(response: 0.45, dampingFraction: 0.8),
+            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: store.s.timer.status)
+            .animation(dragging ? .interactiveSpring() : running ? nil : .spring(response: 0.45, dampingFraction: 0.8),
                        value: headAngle)
     }
 

@@ -102,7 +102,7 @@ extension RootView {
         guard store.s.settings.partnerCelebrated != today else { return }
         store.s.settings.partnerCelebrated = today
         store.save()
-        Sound.shared.done(); Haptics.success()
+        Sound.shared.check(); Haptics.success()
         // På Fokus syns knappen redan — där skulle banderollen bara täcka den.
         guard tab != .focus else { return }
         unlockedBanner = true
@@ -127,8 +127,10 @@ private struct RunningPill: View {
                     .fill(store.activeTint)
                     .frame(width: 7, height: 7)
                     .opacity(store.s.timer.status == .running ? 1 : 0.45)
-                Text(Sv.clock(store.s.timer.remaining))
-                    .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                Ticking(running: store.s.timer.status == .running) {
+                    Text(Sv.clock(store.s.timer.remaining))
+                }
+                .font(.system(size: 15, weight: .semibold).monospacedDigit())
                 Text(store.sessionTitle)
                     .font(.system(size: 14))
                     .foregroundStyle(Palette.second)

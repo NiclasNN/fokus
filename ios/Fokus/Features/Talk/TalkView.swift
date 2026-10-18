@@ -14,6 +14,10 @@ struct TalkView: View {
     @State private var engine: BrainDump.Engine = .simple
     @State private var step = (done: 0, total: 0)
     @State private var added: [AreaID: Int] = [:]
+    /// Frågan till Apple Intelligence kostar — ställ den när fliken visas,
+    /// inte varje gång texten ändras.
+    @State private var modelReady = false
+    @State private var modelNote: String?
     @FocusState private var editing: Bool
 
     enum Phase { case capture, sorting, review, done }
@@ -36,6 +40,10 @@ struct TalkView: View {
             if on { autoStart() } else { dictation.stop() }
         }
         .onAppear { if active { autoStart() } }
+        .task(id: active) {
+            modelReady = BrainDump.onDeviceReady
+            modelNote = BrainDump.onDeviceNote
+        }
     }
 
     private func autoStart() {
@@ -129,14 +137,14 @@ struct TalkView: View {
     }
 
     @ViewBuilder private var engineNote: some View {
-        if BrainDump.onDeviceReady {
-            Label("Sorteras på telefonen med Apple Intelligence. Inget lämnar enheten.",
+        if modelReady {
+            Label("Sorteras på telefonen med Apple Intelligence.",
                   systemImage: "apple.intelligence")
                 .font(.system(size: 12)).foregroundStyle(Palette.third)
         } else {
             VStack(spacing: 3) {
-                Text("Enkel sortering — inget lämnar enheten.")
-                if let n = BrainDump.onDeviceNote { Text(n) }
+                Text("Enkel sortering på telefonen.")
+                if let n = modelNote { Text(n) }
             }
             .font(.system(size: 12)).foregroundStyle(Palette.third)
             .multilineTextAlignment(.center)

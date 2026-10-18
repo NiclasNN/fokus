@@ -88,7 +88,8 @@ struct RunningRing: View {
                 .foregroundStyle(tint)
         }
         .frame(width: size, height: size)
-        .animation(.linear(duration: 0.3), value: fraction)
+        // Ingen animation mellan tickarna: den hade aldrig hunnit sluta, och
+        // då ritas ringen om varje bildruta så länge passet går.
     }
 }
 
@@ -242,8 +243,10 @@ struct TodoRowView: View {
                 Haptics.tap()
                 FocusLauncher.shared.jumpToFocus = true
             } label: {
-                RunningRing(fraction: runFraction, paused: store.s.timer.status == .paused, tint: tint)
-                    .padding(.top, 1)
+                Ticking(running: store.s.timer.status == .running) {
+                    RunningRing(fraction: runFraction, paused: store.s.timer.status == .paused, tint: tint)
+                }
+                .padding(.top, 1)
             }
             .buttonStyle(.plain)
         } else {
@@ -272,10 +275,12 @@ struct TodoRowView: View {
 
     @ViewBuilder private var trailing: some View {
         if isRunning {
-            Text(Sv.clock(store.s.timer.remaining))
-                .font(.system(size: 14, weight: .semibold).monospacedDigit())
-                .foregroundStyle(tint)
-                .padding(.top, 1)
+            Ticking(running: store.s.timer.status == .running) {
+                Text(Sv.clock(store.s.timer.remaining))
+            }
+            .font(.system(size: 14, weight: .semibold).monospacedDigit())
+            .foregroundStyle(tint)
+            .padding(.top, 1)
         } else if !todo.done && !isOpen && !ui.selecting {
             HStack(spacing: 7) {
                 if todo.repeatRule != nil {

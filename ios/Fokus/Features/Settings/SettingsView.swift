@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject var store: Store
     @State private var notifyStatus: UNAuthorizationStatus = .notDetermined
+    @State private var alarmStatus: (ok: Bool, text: String) = (false, "")
     @State private var importing = false
     @State private var exporting = false
     @State private var note: String?
@@ -12,24 +13,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Notiser & larm") {
-                    if notifyStatus != .authorized {
+                Section("Larm") {
+                    if !alarmStatus.ok {
                         Button {
                             Task { await requestNotifications() }
                         } label: {
-                            Label("Aktivera notiser", systemImage: "bell")
+                            Label("Slå på larm", systemImage: "alarm")
                         }
                     }
                     Toggle("Larm när passet är slut", isOn: $store.s.settings.notify)
                         .onChange(of: store.s.settings.notify) { _, on in
-                            on ? store.scheduleAlarm() : store.cancelAlarm()
+                            if !on { store.disarmAlarm() }
                             store.save()
                         }
-                    Text(notifyStatus == .authorized
-                         ? "Larmet är schemalagt i systemet och väcker telefonen även med släckt skärm — appen behöver inte ligga igång."
-                         : notifyStatus == .denied
-                         ? "Notiser är avstängda för Fokus. Slå på dem i Inställningar → Fokus → Notiser."
-                         : "Tillåt notiser så pinglar Fokus dig när passet är slut.")
+                    Button {
+                        Haptics.tap(); Sound.shared.finish()
+                    } label: {
+                        Label("Lyssna på slutklockan", systemImage: "speaker.wave.2")
+                    }
+                    Text(alarmStatus.text)
                         .font(.system(size: 13)).foregroundStyle(Palette.second)
                 }
 
@@ -126,12 +128,11 @@ struct SettingsView: View {
     }
     private func refreshStatus() async {
         notifyStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        alarmStatus = await PassAlarm.status()
     }
     private func requestNotifications() async {
-        _ = try? await UNUserNotificationCenter.current()
-            .requestAuthorization(options: [.alert, .sound, .badge, .timeSensitive])
+        await PassAlarm.prepare()
         await refreshStatus()
-        store.scheduleAlarm()
     }
 }
 

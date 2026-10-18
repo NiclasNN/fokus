@@ -27,7 +27,14 @@ struct FokusApp: App {
                 UNUserNotificationCenter.current().setBadgeCount(0)
             case .background:
                 store.saveNow()
-                store.scheduleAlarm()
+                store.enterBackground()
+                // Appen får några sekunder innan den fryses — be om dem, så
+                // att larmet hinner läggas innan telefonen släcks.
+                let task = UIApplication.shared.beginBackgroundTask(withName: "fokus-larm")
+                Task {
+                    await store.armAlarm()
+                    UIApplication.shared.endBackgroundTask(task)
+                }
             default: break
             }
         }

@@ -51,6 +51,12 @@ extension Color {
 }
 
 enum FokusClock {
+    /// Från nu till slutet. Ritas vyn om efter slutet får intervallet inte
+    /// vända baklänges — ett omvänt intervall kraschar tillägget.
+    static func span(to end: Date) -> ClosedRange<Date> {
+        min(Date.now, end)...end
+    }
+
     /// ceil, inte round: en nedräkning ska visa 25:00 tills den faktiskt
     /// passerat 25:00, och 00:01 hela sista sekunden.
     static func text(_ t: TimeInterval) -> String {

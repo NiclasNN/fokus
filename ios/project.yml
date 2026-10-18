@@ -35,8 +35,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Fokus lyssnar när du talar in vad du behöver göra. Ljudet lämnar aldrig telefonen."
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Fokus gör om det du säger till uppgifter. Igenkänningen sker på telefonen när den har stöd för svenska."
+        INFOPLIST_FILE: FokusInfo.plist
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Fokus lyssnar bara medan du talar in vad du behöver göra."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Fokus gör om det du säger till uppgifter. Igenkänningen sker på telefonen när den har stöd för svenska, annars hos Apple som vanlig diktering."
         OTHER_LDFLAGS: "$(inherited) -weak_framework FoundationModels"
     dependencies:
       - target: FokusWidgets

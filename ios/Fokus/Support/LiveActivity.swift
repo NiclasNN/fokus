@@ -7,6 +7,8 @@ import ActivityKit
 /// räcker för att systemet ska räkna ner själv. Uppdateringar behövs bara när
 /// något FAKTISKT ändras — paus, återupptagning, slut. Därför tickar
 /// låsskärmen vidare med släckt skärm utan att appen kostar ström.
+/// Slutdatumet är också `staleDate`: tar passet slut medan appen sover
+/// visar låsskärmen "Klart" i stället för att stå på 00:00.
 @MainActor
 enum FokusLive {
     private static var current: Activity<FokusAttributes>?
@@ -27,7 +29,7 @@ enum FokusLive {
                                                  remaining: endsAt.timeIntervalSinceNow)
         // Samma pass som redan visas? Uppdatera, starta inte om.
         if let a = current, a.attributes.title == title {
-            Task { await a.update(ActivityContent(state: state, staleDate: nil)) }
+            Task { await a.update(ActivityContent(state: state, staleDate: endsAt)) }
             return
         }
         if current != nil { end() }
@@ -35,7 +37,7 @@ enum FokusLive {
                                     tintHex: tint.hexString, totalSeconds: totalSeconds)
         do {
             current = try Activity.request(attributes: attrs,
-                                           content: ActivityContent(state: state, staleDate: nil),
+                                           content: ActivityContent(state: state, staleDate: endsAt),
                                            pushType: nil)
         } catch {
             // Användaren kan ha stängt av liveaktiviteter för appen. Passet
@@ -56,7 +58,7 @@ enum FokusLive {
         guard let a = current else { return }
         let state = FokusAttributes.ContentState(endsAt: endsAt, paused: false,
                                                  remaining: endsAt.timeIntervalSinceNow)
-        Task { await a.update(ActivityContent(state: state, staleDate: nil)) }
+        Task { await a.update(ActivityContent(state: state, staleDate: endsAt)) }
     }
 
     static func end() {

@@ -22,7 +22,7 @@ struct FokusLiveActivity: Widget {
             let tint = Color(hex: context.attributes.tintHex)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: "timer")
+                    Image(systemName: icon(context))
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(tint)
                         .padding(.leading, 4)
@@ -45,27 +45,33 @@ struct FokusLiveActivity: Widget {
                     progress(context, tint: tint)
                 }
             } compactLeading: {
-                Image(systemName: context.state.paused ? "pause.fill" : "timer")
+                Image(systemName: icon(context))
                     .foregroundStyle(tint)
             } compactTrailing: {
                 countdown(context, size: 13, tint: tint)
                     .frame(maxWidth: 52)
             } minimal: {
-                Image(systemName: context.state.paused ? "pause.fill" : "timer")
+                Image(systemName: icon(context))
                     .foregroundStyle(tint)
             }
             .keylineTint(tint)
         }
     }
 
+    private func icon(_ context: ActivityViewContext<FokusAttributes>) -> String {
+        context.isStale ? "checkmark" : context.state.paused ? "pause.fill" : "timer"
+    }
+
     @ViewBuilder
     private func countdown(_ context: ActivityViewContext<FokusAttributes>,
                            size: CGFloat, tint: Color) -> some View {
         Group {
-            if context.state.paused {
+            if context.isStale {
+                Image(systemName: "checkmark")
+            } else if context.state.paused {
                 Text(FokusClock.text(context.state.remaining))
             } else {
-                Text(timerInterval: Date.now...context.state.endsAt,
+                Text(timerInterval: FokusClock.span(to: context.state.endsAt),
                      pauseTime: nil, countsDown: true, showsHours: false)
                     .multilineTextAlignment(.trailing)
             }
@@ -76,7 +82,9 @@ struct FokusLiveActivity: Widget {
 
     @ViewBuilder
     private func progress(_ context: ActivityViewContext<FokusAttributes>, tint: Color) -> some View {
-        if context.state.paused {
+        if context.isStale {
+            ProgressView(value: 1).tint(tint)
+        } else if context.state.paused {
             ProgressView(value: 1 - context.state.remaining / Double(max(1, context.attributes.totalSeconds)))
                 .tint(tint)
         } else {
@@ -101,7 +109,7 @@ private struct LockScreenView: View {
                           ? context.state.remaining / Double(max(1, context.attributes.totalSeconds)) : 1)
                     .stroke(tint, style: .init(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Image(systemName: context.state.paused ? "pause.fill" : "timer")
+                Image(systemName: context.isStale ? "checkmark" : context.state.paused ? "pause.fill" : "timer")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(tint)
             }
@@ -121,10 +129,14 @@ private struct LockScreenView: View {
             Spacer(minLength: 4)
 
             Group {
-                if context.state.paused {
+                if context.isStale {
+                    // Tiden är slut men appen har inte hunnit stänga
+                    // aktiviteten — den sover tills du öppnar den.
+                    Text("Klart").foregroundStyle(tint)
+                } else if context.state.paused {
                     Text(FokusClock.text(context.state.remaining))
                 } else {
-                    Text(timerInterval: Date.now...context.state.endsAt,
+                    Text(timerInterval: FokusClock.span(to: context.state.endsAt),
                          pauseTime: nil, countsDown: true, showsHours: false)
                         .multilineTextAlignment(.trailing)
                 }

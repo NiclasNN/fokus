@@ -2,8 +2,8 @@ import Foundation
 import Speech
 import AVFoundation
 
-/// Röst till text, på telefonen. Svensk taligenkänning körs lokalt när
-/// enheten klarar det, så det du säger lämnar aldrig telefonen.
+/// Röst till text. Svensk taligenkänning körs lokalt när enheten klarar
+/// det, annars hos Apple som vanlig diktering.
 @MainActor
 final class Dictation: ObservableObject {
     @Published var transcript = ""
