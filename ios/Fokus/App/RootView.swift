@@ -4,6 +4,7 @@ struct RootView: View {
     @EnvironmentObject var store: Store
     @ObservedObject private var launcher = FocusLauncher.shared
     @State private var tab = Tab.lists
+    @State private var unlockedBanner = false
 
     enum Tab: Hashable { case focus, lists, talk, stats, more }
 
@@ -26,6 +27,39 @@ struct RootView: View {
                 .tag(Tab.more)
         }
         .onChange(of: tab) { _, _ in Haptics.tap() }
+        // Fjärde området klart: säg det direkt, var man än är i appen.
+        .onChange(of: store.allFourToday) { _, on in if on { celebrate() } }
+        .onAppear { if store.allFourToday { celebrate() } }
+        .overlay(alignment: .top) {
+            if unlockedBanner {
+                Button {
+                    Haptics.tap()
+                    withAnimation { unlockedBanner = false; tab = .focus }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text(store.s.settings.partnerEmoji).font(.system(size: 24))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Alla fyra områden klara idag")
+                                .font(.system(size: 14.5, weight: .semibold))
+                            Text("\(store.s.settings.partnerName) väntar i Fokus")
+                                .font(.system(size: 13)).foregroundStyle(Palette.second)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Palette.third)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Palette.partner.opacity(0.35), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
+                    .padding(.horizontal, 14)
+                }
+                .buttonStyle(.plain)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: unlockedBanner)
         // ▶ på en rad laddar uppgiften i ratten — och tar dig dit.
         .onChange(of: launcher.jumpToFocus) { _, go in
             guard go else { return }
@@ -62,6 +96,19 @@ struct RootView: View {
 }
 
 extension RootView {
+    /// En gång per dag: ljud, haptik och en banderoll som leder till knappen.
+    func celebrate() {
+        let today = DayKey.today.raw
+        guard store.s.settings.partnerCelebrated != today else { return }
+        store.s.settings.partnerCelebrated = today
+        store.save()
+        Sound.shared.done(); Haptics.success()
+        // På Fokus syns knappen redan — där skulle banderollen bara täcka den.
+        guard tab != .focus else { return }
+        unlockedBanner = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { unlockedBanner = false }
+    }
+
     var finishedBinding: Binding<Bool> {
         Binding(get: { store.finishedTodoID != nil },
                 set: { if !$0 { store.finishedTodoID = nil } })

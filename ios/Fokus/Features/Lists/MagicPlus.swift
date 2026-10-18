@@ -2,13 +2,14 @@ import SwiftUI
 
 /// Things magiska plus. Ett tryck lägger en uppgift sist i listan; lyfter man
 /// knappen och drar hamnar den där man släpper.
+///
+/// Radernas positioner läses ur `ListUI.frames`, som raderna själva fyller i
+/// utan att rita om något. Ordningen är radernas lodräta läge på skärmen.
 struct MagicPlus: View {
     @EnvironmentObject var store: Store
+    @ObservedObject var ui: ListUI
     let route: Route?
-    let frames: [String: CGRect]
-    let order: [String]
-    let groups: [String: CGRect]
-    /// (index i S.todos, dag om man släppte i en dagsgrupp)
+    /// (index i S.todos, dag om man släppte på en dag i Kommande)
     var onCreate: (Int?, DayKey?) -> Void
 
     @State private var drag: CGSize = .zero
@@ -16,8 +17,9 @@ struct MagicPlus: View {
     @State private var target: Target?
 
     private struct Target: Equatable {
-        var localIndex: Int
-        var line: CGRect        // var strecket ritas, i globala koordinater
+        var id: String          // raden strecket står vid
+        var below: Bool         // efter raden i stället för före
+        var line: CGRect
         var day: DayKey?
     }
 
@@ -39,10 +41,8 @@ struct MagicPlus: View {
                 .transition(.opacity)
             }
 
-            // INGEN Button här. En Button runt gesten åt upp trycket: dess
-            // egen tap-gest vann över DragGesture, så ett vanligt tryck på
-            // plusset skapade ingenting. Gesten äger hela knappen i stället —
-            // den hanterar både tryck (ingen rörelse) och drag.
+            // INGEN Button här: dess egen tryckgest vann över DragGesture,
+            // så ett vanligt tryck skapade ingenting. Gesten äger knappen.
             Image(systemName: "plus")
                 .font(.system(size: 25, weight: .semibold))
                 .foregroundStyle(.white)
@@ -55,26 +55,25 @@ struct MagicPlus: View {
                 .shadow(color: tint.opacity(0.45), radius: lifted ? 20 : 12, y: 6)
                 .contentShape(Circle())
                 .scaleEffect(lifted ? 1.07 : 1)
-            .offset(drag)
-            .overlay(alignment: .trailing) {
-                if lifted, let t = target {
-                    Text(hint(t))
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .padding(.horizontal, 11).padding(.vertical, 6)
-                        .background(.regularMaterial, in: Capsule())
-                        .fixedSize()
-                        .offset(x: -66 + drag.width, y: drag.height)
-                        .transition(.opacity)
+                .offset(drag)
+                .overlay(alignment: .trailing) {
+                    if lifted {
+                        Text(hint)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .padding(.horizontal, 11).padding(.vertical, 6)
+                            .background(.regularMaterial, in: Capsule())
+                            .fixedSize()
+                            .offset(x: -66 + drag.width, y: drag.height)
+                            .transition(.opacity)
+                    }
                 }
-            }
-            .gesture(gesture)
+                .gesture(gesture)
         }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lifted)
-        .coordinateSpace(name: "magic")
     }
 
-    private func hint(_ t: Target) -> String {
-        if let d = t.day { return Sv.day(d) }
+    private var hint: String {
+        if let d = target?.day { return Sv.day(d) }
         return "Ny uppgift"
     }
 
@@ -84,57 +83,54 @@ struct MagicPlus: View {
                 if !lifted {
                     guard abs(v.translation.width) + abs(v.translation.height) > 8 else { return }
                     lifted = true
+                    ui.openID = nil
                     Haptics.press()
                 }
                 drag = v.translation
                 aim(at: v.location)
             }
-            .onEnded { v in
+            .onEnded { _ in
                 let wasLifted = lifted
                 let t = target
                 lifted = false
                 drag = .zero
                 target = nil
-                if !wasLifted {
-                    Haptics.press()
+                Haptics.press()
+                if !wasLifted || t == nil {
                     onCreate(nil, nil)                 // ett tryck: sist i listan
-                } else {
-                    onCreate(t.map { globalIndex($0.localIndex) }, t?.day)
+                } else if let t {
+                    onCreate(globalIndex(t), t.day)
                 }
             }
     }
 
-    private func aim(at point: CGPoint) {
-        let visible = order.compactMap { id -> (String, CGRect)? in frames[id].map { (id, $0) } }
-
-        guard !visible.isEmpty else {
-            if target != nil { target = nil }
-            return
-        }
-        let idx = visible.filter { point.y > $0.1.midY }.count
-        let ref = visible[min(idx, visible.count - 1)].1
-        let below = idx >= visible.count
-        let line = CGRect(x: ref.minX + 12,
-                          y: below ? ref.maxY : ref.minY,
-                          width: ref.width - 24, height: 2)
-        let day = groups.first { $0.value.contains(CGPoint(x: $0.value.midX, y: point.y)) }
-            .flatMap { DayKey(raw: $0.key) }
-
-        let next = Target(localIndex: idx, line: line, day: day)
-        if next != target {
-            Haptics.tick()
-            target = next
-        }
+    /// Raderna som syns just nu, uppifrån och ner.
+    private var visibleRows: [(id: String, frame: CGRect)] {
+        let screen = UIScreen.main.bounds
+        return ui.frames
+            .filter { id, f in f.height > 1 && f.intersects(screen) && store.todo(id) != nil }
+            .map { (id: $0.key, frame: $0.value) }
+            .sorted { $0.frame.minY < $1.frame.minY }
     }
 
-    /// Positionen i S.todos är ordningen — översätt listans index dit.
-    private func globalIndex(_ local: Int) -> Int {
-        let visible = order.filter { frames[$0] != nil }
-        guard !visible.isEmpty else { return store.s.todos.count }
-        if local >= visible.count {
-            if let last = store.index(of: visible[visible.count - 1]) { return last + 1 }
-            return store.s.todos.count
-        }
-        return store.index(of: visible[local]) ?? store.s.todos.count
+    private func aim(at point: CGPoint) {
+        let rows = visibleRows
+        guard !rows.isEmpty else { if target != nil { target = nil }; return }
+        let idx = rows.filter { point.y > $0.frame.midY }.count
+        let below = idx >= rows.count
+        let ref = rows[min(idx, rows.count - 1)]
+        let line = CGRect(x: ref.frame.minX + 12, y: below ? ref.frame.maxY : ref.frame.minY,
+                          width: ref.frame.width - 24, height: 2)
+        // I Kommande ärver den nya uppgiften dagen från raden den hamnar vid.
+        var day: DayKey?
+        if case .list(.upcoming)? = route { day = store.todo(ref.id)?.when?.day }
+        let next = Target(id: ref.id, below: below, line: line, day: day)
+        if next != target { Haptics.tick(); target = next }
+    }
+
+    /// Positionen i S.todos är ordningen — översätt släpppunkten dit.
+    private func globalIndex(_ t: Target) -> Int? {
+        guard let i = store.index(of: t.id) else { return nil }
+        return t.below ? i + 1 : i
     }
 }

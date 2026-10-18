@@ -34,12 +34,6 @@ final class Dictation: ObservableObject {
             problem = "Svensk taligenkänning är inte tillgänglig just nu. Du kan skriva i rutan i stället."
             return
         }
-        // Löftet är att inget lämnar telefonen. Utan lokal svensk igenkänning
-        // skulle ljudet gå till Apples servrar — hellre säga det än göra det.
-        guard recognizer.supportsOnDeviceRecognition else {
-            problem = "Svensk taligenkänning på telefonen saknas. Lägg till svenska under Inställningar → Allmänt → Tangentbord → Diktering — eller skriv i rutan."
-            return
-        }
 
         do {
             let session = AVAudioSession.sharedInstance()
@@ -53,7 +47,10 @@ final class Dictation: ObservableObject {
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         req.addsPunctuation = true          // punkter och komman hjälper uppdelningen
-        req.requiresOnDeviceRecognition = true
+        // Lokalt när telefonen har svensk igenkänning. Har den inte det sköter
+        // Apple igenkänningen, precis som vanlig diktering — att stänga av en
+        // funktion du redan använder vore sämre än att säga det som det är.
+        if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
         request = req
 
         let input = engine.inputNode
@@ -88,9 +85,17 @@ final class Dictation: ObservableObject {
 
     func stop() {
         guard listening else { return }
+        // Avsluta ljudet men låt igenkänningen leverera sitt slutresultat —
+        // att avbryta direkt tappade de sista orden man sa.
         request?.endAudio()
-        teardown()
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+        listening = false
         Haptics.tap()
+        let pending = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            if let self, self.task === pending, pending != nil { self.teardown() }
+        }
     }
 
     private func teardown() {

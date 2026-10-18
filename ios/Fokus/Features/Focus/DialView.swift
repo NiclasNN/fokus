@@ -22,7 +22,7 @@ struct DialView: View {
     private let elastic = 0.55
 
     private var live: Bool { store.s.timer.isLive }
-    private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
+    private var tint: Color { store.activeTint }
 
     private var laps: Int { max(0, (current - 1) / 60) }
     private var arcMinutes: Int { current - laps * 60 }          // alltid 1–60
@@ -154,7 +154,7 @@ struct DialView: View {
 
     private var face: some View {
         VStack(spacing: 2) {
-            Text((Area.of(store.s.timer.areaID)?.name ?? "").uppercased())
+            Text(store.focusLabel.uppercased())
                 .font(.system(size: 11, weight: .bold))
                 .kerning(1.7)
                 .foregroundStyle(tint)

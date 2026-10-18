@@ -19,6 +19,7 @@ enum Palette {
     static let someday  = Color(red: 0.72, green: 0.57, blue: 0.25)
     static let logbook  = Color(red: 0.36, green: 0.68, blue: 0.42)
     static let inbox    = Color(red: 0.36, green: 0.55, blue: 0.94)
+    static let partner  = Color(red: 0.86, green: 0.29, blue: 0.62)   // Malin — inte Socialts rosa
 
     // ytor
     static let bg      = Color(uiColor: .systemGroupedBackground)

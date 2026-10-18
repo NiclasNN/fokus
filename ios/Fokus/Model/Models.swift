@@ -166,6 +166,9 @@ struct Todo: Identifiable, Hashable, Codable {
     var focusedSeconds: Int = 0
     var sessionCount: Int = 0
     var repeatRule: RepeatRule?
+    /// Den uppgift en upprepning födde när den här bockades av. Ångras
+    /// bocken tas den bort igen — annars blev det en dubblett.
+    var nextID: String?
 
     var isHeading: Bool { kind == .heading }
     /// Sorterad någonstans? Inkorgen är precis det som inte är det.
@@ -207,6 +210,8 @@ struct TimerState: Codable, Hashable {
     var durationSeconds: Int = 25 * 60
     var startedAt: Date?
     var elapsedBefore: TimeInterval = 0
+    /// Tid med Malin i stället för ett livsområde eller en uppgift.
+    var partner: Bool = false
 
     var elapsed: TimeInterval {
         guard status == .running, let s = startedAt else { return elapsedBefore }
@@ -224,6 +229,11 @@ struct Settings: Codable, Hashable {
     var notify: Bool = true
     var keepAwake: Bool = false
     var lastDurationMinutes: Int = 25
+    var partnerName: String = "Malin"
+    var partnerEmoji: String = "💖"
+    var partnerMinutes: Int = 60
+    /// Dagen då knappen senast låstes upp — firandet ska ske en gång per dag.
+    var partnerCelebrated: String?
 }
 
 // MARK: - Allt på disk
@@ -265,6 +275,7 @@ extension Todo {
         focusedSeconds  = try c.decodeIfPresent(Int.self, forKey: .focusedSeconds) ?? 0
         sessionCount    = try c.decodeIfPresent(Int.self, forKey: .sessionCount) ?? 0
         repeatRule      = try c.decodeIfPresent(RepeatRule.self, forKey: .repeatRule)
+        nextID          = try c.decodeIfPresent(String.self, forKey: .nextID)
     }
 }
 
@@ -313,6 +324,7 @@ extension TimerState {
         durationSeconds = try c.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? 25 * 60
         startedAt       = try c.decodeIfPresent(Date.self, forKey: .startedAt)
         elapsedBefore   = try c.decodeIfPresent(TimeInterval.self, forKey: .elapsedBefore) ?? 0
+        partner         = try c.decodeIfPresent(Bool.self, forKey: .partner) ?? false
     }
 }
 
@@ -325,6 +337,10 @@ extension Settings {
         notify    = try c.decodeIfPresent(Bool.self, forKey: .notify) ?? true
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
         lastDurationMinutes = try c.decodeIfPresent(Int.self, forKey: .lastDurationMinutes) ?? 25
+        partnerName  = try c.decodeIfPresent(String.self, forKey: .partnerName) ?? "Malin"
+        partnerEmoji = try c.decodeIfPresent(String.self, forKey: .partnerEmoji) ?? "💖"
+        partnerMinutes = try c.decodeIfPresent(Int.self, forKey: .partnerMinutes) ?? 60
+        partnerCelebrated = try c.decodeIfPresent(String.self, forKey: .partnerCelebrated)
     }
 }
 

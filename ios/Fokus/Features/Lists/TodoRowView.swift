@@ -12,6 +12,14 @@ final class ListUI: ObservableObject {
     @Published var moveTarget: String?
     @Published var repeatTarget: String?
 
+    /// Var raderna ligger på skärmen — läses av plusset när det dras.
+    /// Medvetet INTE @Published: raderna skriver hit vid varje bildruta när
+    /// man scrollar, och det får aldrig rita om listan. Förut gjorde det det.
+    var frames: [String: CGRect] = [:]
+    /// Det öppna kortets yta. Den här är publicerad — bara en rad skriver
+    /// hit, och fångaren för "tryck utanför" måste följa kortet när det växer.
+    @Published var openFrame: CGRect?
+
     var selecting: Bool { !selection.isEmpty }
     func clearSelection() { selection.removeAll() }
 }
@@ -104,15 +112,6 @@ struct SelectCircle: View {
 
 // MARK: - Raden
 
-/// Var raden ligger på skärmen — det magiska plusset behöver veta det
-/// för att kunna räkna om en släpppunkt till ett index i listan.
-struct RowFrames: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
 struct TodoRowView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var ui: ListUI
@@ -130,6 +129,22 @@ struct TodoRowView: View {
     private var selected: Bool { ui.selection.contains(todo.id) }
     /// Things: kortet poppar ut medan resten av listan tonas bort.
     private var dimmed: Bool { ui.openID != nil && !isOpen }
+    @FocusState private var titleFocused: Bool
+
+    /// Retur betyder "klar", inte en ny rad — ett flerradigt fält skulle
+    /// annars bara byta rad, och kortet gick inte att stänga från tangentbordet.
+    private var titleBinding: Binding<String> {
+        let b = store.binding(for: todo.id).title
+        return Binding(get: { b.wrappedValue }, set: { v in
+            if v.contains("\n") {
+                b.wrappedValue = v.replacingOccurrences(of: "\n", with: "")
+                titleFocused = false
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) { ui.openID = nil }
+            } else {
+                b.wrappedValue = v
+            }
+        })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -137,9 +152,19 @@ struct TodoRowView: View {
                 leading
                 VStack(alignment: .leading, spacing: 2.5) {
                     if isOpen {
-                        TextField("Vad ska du göra?", text: store.binding(for: todo.id).title, axis: .vertical)
+                        TextField("Vad ska du göra?", text: titleBinding, axis: .vertical)
                             .font(Typo.rowBold)
                             .textInputAutocapitalization(.sentences)
+                            .submitLabel(.done)
+                            .focused($titleFocused)
+                            // En ny uppgift ska ha tangentbordet uppe direkt. Utan
+                            // det såg plusset ut att inte göra något, man tryckte
+                            // igen — och fick ännu en "Namnlös".
+                            .task {
+                                guard todo.title.isEmpty else { return }
+                                try? await Task.sleep(nanoseconds: 180_000_000)
+                                titleFocused = true
+                            }
                     } else {
                         Text(todo.title.isEmpty ? "Namnlös" : todo.title)
                             .font(Typo.row)
@@ -178,9 +203,20 @@ struct TodoRowView: View {
         .animation(.easeOut(duration: 0.22), value: dimmed)
         .background(
             GeometryReader { g in
-                Color.clear.preference(key: RowFrames.self, value: [todo.id: g.frame(in: .global)])
+                Color.clear
+                    .onAppear { report(g.frame(in: .global)) }
+                    .onChange(of: g.frame(in: .global)) { _, f in report(f) }
             }
         )
+        .onDisappear {
+            ui.frames[todo.id] = nil
+            if isOpen { ui.openFrame = nil }
+        }
+    }
+
+    private func report(_ f: CGRect) {
+        ui.frames[todo.id] = f
+        if isOpen, ui.openFrame != f { ui.openFrame = f }
     }
 
     private func tap() {
@@ -427,6 +463,7 @@ final class FocusLauncher: ObservableObject {
     }
 
     func load(_ t: Todo, area: AreaID, store: Store) {
+        store.s.timer.partner = false
         store.s.timer.areaID = area
         store.s.timer.todoID = t.id
         store.s.timer.durationSeconds = t.durationMinutes * 60

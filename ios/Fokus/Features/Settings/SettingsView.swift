@@ -46,6 +46,29 @@ struct SettingsView: View {
                         .font(.system(size: 13)).foregroundStyle(Palette.second)
                 }
 
+                Section {
+                    HStack {
+                        Text("Namn")
+                        TextField("Malin", text: $store.s.settings.partnerName)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(Palette.second)
+                    }
+                    HStack {
+                        Text("Emoji")
+                        TextField("💖", text: $store.s.settings.partnerEmoji)
+                            .multilineTextAlignment(.trailing)
+                            .onChange(of: store.s.settings.partnerEmoji) { _, v in
+                                // en enda emoji — tangentbordet kan klistra in fler
+                                if v.count > 1 { store.s.settings.partnerEmoji = String(v.suffix(1)) }
+                            }
+                    }
+                } header: {
+                    Text(store.s.settings.partnerName.isEmpty ? "Malin" : store.s.settings.partnerName)
+                } footer: {
+                    Text("Knappen dyker upp mitt bland plattorna i Fokus när du har gjort något i alla fyra livsområden under dagen — bockat av en uppgift eller kört ett pass i varje.")
+                }
+                .onChange(of: store.s.settings.partnerName) { _, _ in store.save() }
+
                 Section("Utseende") {
                     Picker("Tema", selection: $store.s.settings.theme) {
                         Text("System").tag(Settings.Theme.system)

@@ -173,11 +173,6 @@ struct SmartListView: View {
                     Text(Sv.daySubtitle(k)).font(Typo.meta).foregroundStyle(Palette.third)
                 }
                 .textCase(nil)
-                .background(
-                    GeometryReader { g in
-                        Color.clear.preference(key: GroupFrames.self, value: [k.raw: g.frame(in: .global)])
-                    }
-                )
             }
         }
     }

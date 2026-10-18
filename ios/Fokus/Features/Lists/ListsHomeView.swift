@@ -5,19 +5,6 @@ enum Route: Hashable {
     case area(AreaID)
 }
 
-/// Rader i visningsordning, och dagsgruppernas ytor. Det magiska plusset
-/// läser båda för att kunna räkna om en släpppunkt till ett index.
-struct RowOrder: PreferenceKey {
-    static var defaultValue: [String] = []
-    static func reduce(value: inout [String], nextValue: () -> [String]) { value += nextValue() }
-}
-struct GroupFrames: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
 struct ListsHomeView: View {
     @EnvironmentObject var store: Store
     @StateObject private var ui = ListUI()
@@ -25,9 +12,7 @@ struct ListsHomeView: View {
 
     @State private var path: [Route] = []
     @State private var query = ""
-    @State private var frames: [String: CGRect] = [:]
-    @State private var order: [String] = []
-    @State private var groups: [String: CGRect] = [:]
+    @State private var quickAdd = false
 
     private var route: Route? { path.last }
 
@@ -42,13 +27,17 @@ struct ListsHomeView: View {
                 }
         }
         .environmentObject(ui)
-        .onPreferenceChange(RowFrames.self)   { frames = $0 }
-        .onPreferenceChange(RowOrder.self)    { order = $0 }
-        .onPreferenceChange(GroupFrames.self) { groups = $0 }
+        // Ett kort som stängs utan att något skrivits ska inte lämna en "Namnlös".
+        .onChange(of: ui.openID) { old, _ in
+            if let old { store.discardIfEmpty(old) }
+            if ui.openID == nil { ui.openFrame = nil }
+        }
+        // Raderna från förra skärmen får inte bli spöklägen för plusset.
+        .onChange(of: path) { _, _ in ui.frames.removeAll() }
         // Things: ett tryck utanför kortet stänger det. Fångaren lämnar en
         // lucka där kortet står, så andra rader går att öppna med ETT tryck.
         .overlay {
-            if let id = ui.openID, let f = frames[id] {
+            if ui.openID != nil, let f = ui.openFrame {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: max(0, f.minY))
                         .contentShape(Rectangle()).onTapGesture { closeCard() }
@@ -61,7 +50,7 @@ struct ListsHomeView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if !ui.selecting {
-                MagicPlus(route: route, frames: frames, order: order, groups: groups) { index, day in
+                MagicPlus(ui: ui, route: route) { index, day in
                     create(at: index, day: day)
                 }
                 .padding(.trailing, 18).padding(.bottom, 14)
@@ -71,6 +60,11 @@ struct ListsHomeView: View {
             if ui.selecting { SelectionBar().environmentObject(ui) }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: ui.selecting)
+        .sheet(isPresented: $quickAdd) {
+            QuickAddSheet().environmentObject(store)
+                .presentationDetents([.height(300)])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(item: Binding(get: { ui.whenTarget.map(Ident.init) },
                              set: { if $0 == nil { ui.whenTarget = nil } })) { w in
             WhenSheet(when: store.binding(for: w.id).when, evening: store.binding(for: w.id).evening)
@@ -145,6 +139,10 @@ struct ListsHomeView: View {
     // MARK: - Nytt
 
     private func create(at index: Int?, day: DayKey?) {
+        // Hemskärmen visar inga uppgifter, så ett kort där kunde aldrig öppnas.
+        // Plusset skapade då en osynlig, tom uppgift i Inkorgen — varje tryck.
+        // Där frågar vi i stället, och sparar bara om något skrivits.
+        guard route != nil else { quickAdd = true; return }
         var t = Todo()
         t.durationMinutes = store.s.settings.lastDurationMinutes
         switch route {

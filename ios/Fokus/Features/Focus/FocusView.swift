@@ -4,7 +4,7 @@ struct FocusView: View {
     @EnvironmentObject var store: Store
     @State private var showPresets = false
 
-    private var tint: Color { Area.of(store.s.timer.areaID)?.tint ?? Palette.blue }
+    private var tint: Color { store.activeTint }
     private let presets = [5, 15, 25, 45, 60, 90]
 
     /// Allt du kan ta tag i i området — det du planerat för idag först.
@@ -24,7 +24,9 @@ struct FocusView: View {
                 tint.opacity(0.07).ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    HStack { corner(.socialt); Spacer(); corner(.struktur) }
+                    HStack(alignment: .top) {
+                        corner(.socialt); Spacer(); partnerSlot; Spacer(); corner(.struktur)
+                    }
                     Spacer(minLength: 4)
                     VStack(spacing: 14) {
                         DialView()
@@ -39,21 +41,93 @@ struct FocusView: View {
                 .padding(.horizontal, 16)
             }
             .animation(.easeInOut(duration: 0.5), value: store.s.timer.areaID)
+            .animation(.easeInOut(duration: 0.5), value: store.s.timer.partner)
+            .animation(.spring(response: 0.55, dampingFraction: 0.62), value: store.allFourToday)
         }
         .navigationBarHidden(true)
+    }
+
+    // MARK: - Malin
+
+    /// Knappen finns först när alla fyra livsområden fått något idag — en
+    /// bockad uppgift eller ett pass i vart och ett. Innan dess står fyra små
+    /// prickar på samma plats och visar hur långt dagen kommit.
+    @ViewBuilder private var partnerSlot: some View {
+        if store.allFourToday {
+            let on = store.s.timer.partner
+            Button {
+                guard !store.timeLocked else { Haptics.warning(); return }
+                Haptics.press()
+                store.startPartner()
+            } label: {
+                VStack(spacing: 5) {
+                    Text(store.s.settings.partnerEmoji)
+                        .font(.system(size: 31))
+                        .frame(width: 64, height: 64)
+                        .background(Circle().fill(on ? AnyShapeStyle(Palette.partner)
+                                                     : AnyShapeStyle(Palette.partner.opacity(0.15))))
+                        .overlay(Circle().stroke(Palette.partner.opacity(on ? 0 : 0.45), lineWidth: 1.2))
+                        .shadow(color: Palette.partner.opacity(on ? 0.5 : 0.25), radius: on ? 14 : 8, y: 4)
+                    Text(store.s.settings.partnerName)
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(Palette.partner)
+                        .lineLimit(1)
+                }
+                .scaleEffect(on ? 1.06 : 1)
+            }
+            .buttonStyle(.plain)
+            .opacity(store.timeLocked && !on ? 0.4 : 1)
+            .transition(.scale(scale: 0.2).combined(with: .opacity))
+            .padding(.top, 6)
+        } else {
+            HStack(spacing: 6) {
+                ForEach(AreaID.allCases) { id in
+                    Circle()
+                        .fill(store.touchedToday(id) ? Area.of(id)!.tint : Palette.third.opacity(0.22))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .padding(.top, 36)
+            .accessibilityLabel("\(AreaID.allCases.filter(store.touchedToday).count) av 4 områden klara idag")
+        }
+    }
+
+    private var partnerChip: some View {
+        HStack(spacing: 8) {
+            Text("\(store.s.settings.partnerEmoji) Tid med \(store.s.settings.partnerName)")
+                .font(.system(size: 14.5, weight: .medium))
+                .foregroundStyle(.white)
+            if !store.timeLocked {
+                Button {
+                    Haptics.tap()
+                    store.s.timer.partner = false
+                    store.save()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(.white.opacity(0.24), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, 15).padding(.trailing, 7).padding(.vertical, 7)
+        .background(Palette.partner, in: Capsule())
     }
 
     // MARK: - Hörnen
 
     private func corner(_ id: AreaID) -> some View {
         let a = Area.of(id)!
-        let on = store.s.timer.areaID == id
+        let on = store.s.timer.areaID == id && !store.s.timer.partner
         // Siffran säger "du har saker att göra här" — samma tal som
         // områdets rad i Listor visar.
         let waiting = store.areaBadge(id)
         return Button {
             guard !store.timeLocked else { Haptics.warning(); return }
             Haptics.press()
+            store.s.timer.partner = false
             store.s.timer.areaID = id
             store.s.timer.todoID = nil
             store.save()
@@ -94,7 +168,9 @@ struct FocusView: View {
     private var taskStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
-                if strip.isEmpty {
+                if store.s.timer.partner {
+                    partnerChip
+                } else if strip.isEmpty {
                     Text("Inget att göra i \(Area.of(store.s.timer.areaID)?.short ?? "") — lägg till under Listor")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.third)
@@ -105,6 +181,7 @@ struct FocusView: View {
                         Button {
                             guard !store.timeLocked else { Haptics.warning(); return }
                             Haptics.tap()
+                            store.s.timer.partner = false
                             if on { store.s.timer.todoID = nil }
                             else {
                                 store.s.timer.todoID = t.id

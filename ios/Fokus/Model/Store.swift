@@ -32,6 +32,28 @@ final class Store: ObservableObject {
               let state = try? JSONDecoder.fokus.decode(AppState.self, from: data) else { return }
         s = state
         flattenProjects()
+        purgeEmpty()
+    }
+
+    /// Helt tomma uppgifter — ingen titel, inga anteckningar, inga steg, ingen
+    /// fokustid. De kom från plusset när tangentbordet inte dök upp, och är
+    /// skräp, inte data. Har en uppgift NÅGOT innehåll behålls den.
+    private func isEmptyShell(_ t: Todo) -> Bool {
+        t.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && t.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && t.checklist.allSatisfy { $0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+            && t.tags.isEmpty && t.focusedSeconds == 0 && t.repeatRule == nil
+    }
+    private func purgeEmpty() {
+        let before = s.todos.count
+        s.todos.removeAll { isEmptyShell($0) && $0.id != s.timer.todoID }
+        if s.todos.count != before { saveNow() }
+    }
+    /// Ett kort som stängs utan att något skrivits ska inte lämna en "Namnlös".
+    func discardIfEmpty(_ id: String) {
+        guard let t = todo(id), isEmptyShell(t), id != s.timer.todoID else { return }
+        s.todos.removeAll { $0.id == id }
+        save()
     }
 
     /// Projektlagret är borta. Uppgifter som låg i ett projekt flyttas upp
@@ -75,9 +97,15 @@ final class Store: ObservableObject {
     /// Accenten för hela appen just nu: uppgiftens färg om ett pass har en,
     /// annars det valda områdets.
     var activeTint: Color {
+        if s.timer.partner { return Palette.partner }
         if let t = currentTodo { return tint(for: t) }
         return Area.of(s.timer.areaID)?.tint ?? Palette.blue
     }
+    /// Det som står överst i ratten: området — eller Malins namn.
+    var focusLabel: String {
+        s.timer.partner ? s.settings.partnerName : (Area.of(s.timer.areaID)?.name ?? "Fokus")
+    }
+    var partnerTitle: String { "\(s.settings.partnerEmoji) \(s.settings.partnerName)" }
     func area(for t: Todo) -> Area? { Area.of(t.areaID) }
 
     // MARK: - Listorna
@@ -168,6 +196,14 @@ final class Store: ObservableObject {
         save()
     }
     func setDone(_ id: String, _ done: Bool) {
+        guard index(of: id) != nil else { return }
+        if !done, let i = index(of: id), let nid = s.todos[i].nextID {
+            // Ångrad bock: den nästa som bocken födde ska inte bli en dubblett.
+            s.todos[i].nextID = nil
+            if let j = index(of: nid), !s.todos[j].done, s.todos[j].focusedSeconds == 0 {
+                s.todos.remove(at: j)
+            }
+        }
         guard let i = index(of: id) else { return }
         s.todos[i].done = done
         s.todos[i].completedAt = done ? Date() : nil
@@ -191,8 +227,33 @@ final class Store: ObservableObject {
                 nextOne.deadline = DayKey(Calendar.current.date(byAdding: .day, value: shift,
                                                                 to: nextOne.when!.day!.date) ?? dl.date)
             }
+            s.todos[i].nextID = nextOne.id
+            nextOne.nextID = nil
             s.todos.insert(nextOne, at: i)
         }
+        save()
+    }
+
+    // MARK: - Malin
+
+    /// Har du gjort något i området idag — bockat av en uppgift eller kört ett pass?
+    func touchedToday(_ area: AreaID) -> Bool {
+        let today = DayKey.today
+        return s.sessions.contains { $0.areaID == area && DayKey($0.endedAt) == today }
+            || s.todos.contains { $0.areaID == area && $0.done && $0.completedAt.map(DayKey.init) == today }
+    }
+    var allFourToday: Bool { AreaID.allCases.allSatisfy(touchedToday) }
+
+    /// Knappen för Malin finns bara när alla fyra områden fått något idag.
+    func startPartner() {
+        guard !timeLocked, allFourToday else { return }
+        s.timer.partner = true
+        s.timer.todoID = nil
+        s.timer.areaID = .socialt
+        s.timer.durationSeconds = s.settings.partnerMinutes * 60
+        s.timer.elapsedBefore = 0
+        s.timer.status = .idle
+        s.timer.startedAt = nil
         save()
     }
 
@@ -224,7 +285,8 @@ final class Store: ObservableObject {
 
     var currentTodo: Todo? { todo(s.timer.todoID) }
     var sessionTitle: String {
-        currentTodo?.title.isEmpty == false
+        if s.timer.partner { return partnerTitle }
+        return currentTodo?.title.isEmpty == false
             ? currentTodo!.title
             : (Area.of(s.timer.areaID)?.name ?? "Fokus")
     }
@@ -235,6 +297,7 @@ final class Store: ObservableObject {
         if s.timer.status == .idle { s.timer.elapsedBefore = 0 }
         s.timer.status = .running
         s.timer.startedAt = Date()
+        if s.timer.partner { s.settings.partnerMinutes = max(1, s.timer.durationSeconds / 60) }
         startTicking()
         Sound.shared.start(); Haptics.tap()
         scheduleAlarm()
@@ -246,9 +309,10 @@ final class Store: ObservableObject {
     private func showOnLockScreen() {
         // Utan vald uppgift skulle sessionTitle ge områdets namn, och då stod
         // det två gånger på låsskärmen.
-        let heading = currentTodo?.title.isEmpty == false ? currentTodo!.title : "Fritt pass"
+        let heading = s.timer.partner ? "\(s.settings.partnerEmoji) Tid med \(s.settings.partnerName)"
+            : (currentTodo?.title.isEmpty == false ? currentTodo!.title : "Fritt pass")
         FokusLive.start(title: heading,
-                        areaName: Area.of(s.timer.areaID)?.name ?? "Fokus",
+                        areaName: focusLabel,
                         tint: activeTint,
                         totalSeconds: s.timer.durationSeconds,
                         endsAt: Date().addingTimeInterval(s.timer.remaining))

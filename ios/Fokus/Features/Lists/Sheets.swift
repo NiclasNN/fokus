@@ -314,3 +314,79 @@ struct BulkMoveSheet: View {
         Haptics.press(); ui.clearSelection(); dismiss()
     }
 }
+
+// MARK: - Ny uppgift från hemskärmen
+
+/// Plusset på hemskärmen. Tangentbordet är uppe direkt, området väljs med
+/// ett tryck, och ingenting sparas förrän det finns en titel.
+struct QuickAddSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var area: AreaID?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Ny uppgift").font(.system(size: 17, weight: .semibold))
+            TextField("Vad ska du göra?", text: $title)
+                .font(.system(size: 17))
+                .focused($focused)
+                .submitLabel(.done)
+                .onSubmit(save)
+                .padding(12)
+                .background(Palette.sunk, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            HStack(spacing: 6) {
+                chip(nil, "Inkorg", "tray", Palette.inbox)
+                ForEach(Area.all) { a in chip(a.id, a.short, a.symbol, a.tint) }
+            }
+
+            Button(action: save) {
+                Text("Lägg till")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(Palette.blue, in: Capsule())
+            }
+            .buttonStyle(PressScale())
+            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+            .opacity(title.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1)
+        }
+        .padding(20)
+        .task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            focused = true
+        }
+    }
+
+    private func chip(_ id: AreaID?, _ label: String, _ symbol: String, _ tint: Color) -> some View {
+        let on = area == id
+        return Button {
+            Haptics.tap()
+            area = id
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 13, weight: .semibold))
+                Text(label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+            }
+            .foregroundStyle(on ? .white : tint)
+            .frame(maxWidth: .infinity).padding(.vertical, 8)
+            .background(on ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.12)),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func save() {
+        let v = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.isEmpty else { return }
+        var t = Todo()
+        t.title = v
+        t.areaID = area
+        t.durationMinutes = store.s.settings.lastDurationMinutes
+        store.insert(t, at: nil)
+        Sound.shared.check(); Haptics.success()
+        dismiss()
+    }
+}
